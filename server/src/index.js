@@ -48,11 +48,11 @@ const profileStaticOptions = {
   setHeaders: (res) => res.setHeader("Cache-Control", "public, max-age=3600"),
 };
 app.use("/uploads", express.static(uploadsRoot, profileStaticOptions));
-app.use("/api/uploads", express.static(uploadsRoot, profileStaticOptions));
-app.get("/api/health", (_req, res) =>
+app.use("/uploads", express.static(uploadsRoot, profileStaticOptions));
+app.get("/health", (_req, res) =>
   res.json({ status: "ok", service: "MU Home Service API" }),
 );
-app.get("/api/services", async (_req, res, next) => {
+app.get("/services", async (_req, res, next) => {
   try {
     const saved = await getDB()
       .collection("siteContent")
@@ -67,7 +67,7 @@ app.get("/api/services", async (_req, res, next) => {
     next(e);
   }
 });
-app.get("/api/packages", async (_req, res, next) => {
+app.get("/packages", async (_req, res, next) => {
   try {
     const saved = await getDB()
       .collection("siteContent")
@@ -82,7 +82,7 @@ app.get("/api/packages", async (_req, res, next) => {
     next(e);
   }
 });
-app.get("/api/admin/content", requireAdmin, async (_req, res, next) => {
+app.get("/admin/content", requireAdmin, async (_req, res, next) => {
   try {
     const [s, p] = await Promise.all([
       getDB().collection("siteContent").findOne({ _id: "services" }),
@@ -158,7 +158,7 @@ app.put("/api/admin/content", requireAdmin, async (req, res, next) => {
     next(e);
   }
 });
-app.get("/api/dashboard/summary", async (req, res, next) => {
+app.get("/dashboard/summary", async (req, res, next) => {
   try {
     const { requireAuth } = await import("./middleware/auth.js");
     requireAuth(req, res, async () => {
@@ -214,7 +214,7 @@ app.get("/api/dashboard/summary", async (req, res, next) => {
 });
 
 // Admin operations: technician management, income/expense ledger, and inventory.
-app.get("/api/admin/technicians", requireAdmin, async (_req, res, next) => {
+app.get("/admin/technicians", requireAdmin, async (_req, res, next) => {
   try {
     const rows = await getDB()
       .collection("users")
@@ -264,7 +264,7 @@ app.patch(
     }
   },
 );
-app.get("/api/admin/staff", requireAdmin, async (_req, res, next) => {
+app.get("/admin/staff", requireAdmin, async (_req, res, next) => {
   try {
     const rows = await getDB()
       .collection("users")
@@ -337,7 +337,7 @@ app.patch(
     }
   },
 );
-app.get("/api/admin/finance", requireAdmin, async (_req, res, next) => {
+app.get("/admin/finance", requireAdmin, async (_req, res, next) => {
   try {
     const rows = await getDB()
       .collection("financeEntries")
@@ -356,7 +356,7 @@ app.get("/api/admin/finance", requireAdmin, async (_req, res, next) => {
     next(e);
   }
 });
-app.post("/api/admin/finance", requireAdmin, async (req, res, next) => {
+app.post("/admin/finance", requireAdmin, async (req, res, next) => {
   try {
     const { type, category, amount, note, date } = req.body || {};
     if (
@@ -388,7 +388,7 @@ app.post("/api/admin/finance", requireAdmin, async (req, res, next) => {
     next(e);
   }
 });
-app.get("/api/admin/inventory", requireAdmin, async (_req, res, next) => {
+app.get("/admin/inventory", requireAdmin, async (_req, res, next) => {
   try {
     const items = await getDB()
       .collection("inventory")
@@ -401,7 +401,7 @@ app.get("/api/admin/inventory", requireAdmin, async (_req, res, next) => {
     next(e);
   }
 });
-app.post("/api/admin/inventory", requireAdmin, async (req, res, next) => {
+app.post("/admin/inventory", requireAdmin, async (req, res, next) => {
   try {
     const { name, sku, quantity, unit, costPrice, reorderLevel } =
       req.body || {};
@@ -492,48 +492,44 @@ app.delete("/api/admin/inventory/:id", requireAdmin, async (req, res, next) => {
 });
 
 // Integrated operations: payments -> finance ledger; stock movements -> inventory ledger + finance.
-app.get(
-  "/api/admin/operations/bookings",
-  requireAdmin,
-  async (_req, res, next) => {
-    try {
-      const rows = await getDB()
-        .collection("bookings")
-        .find({ status: { $ne: "Cancelled" } })
-        .sort({ createdAt: -1 })
-        .limit(500)
-        .project({
-          ticketId: 1,
-          name: 1,
-          phone: 1,
-          serviceName: 1,
-          status: 1,
-          createdAt: 1,
-          technicianIds: 1,
-          technicianId: 1,
-          paymentStatus: 1,
-          paymentAmount: 1,
-          payments: 1,
-        })
-        .toArray();
-      res.json({
-        bookings: rows.map((b) => ({
-          ...b,
-          paidAmount: (b.payments || []).reduce(
-            (n, p) => n + Number(p.amount || 0),
-            0,
-          ),
-        })),
-      });
-    } catch (e) {
-      next(e);
-    }
-  },
-);
+app.get("/admin/operations/bookings", requireAdmin, async (_req, res, next) => {
+  try {
+    const rows = await getDB()
+      .collection("bookings")
+      .find({ status: { $ne: "Cancelled" } })
+      .sort({ createdAt: -1 })
+      .limit(500)
+      .project({
+        ticketId: 1,
+        name: 1,
+        phone: 1,
+        serviceName: 1,
+        status: 1,
+        createdAt: 1,
+        technicianIds: 1,
+        technicianId: 1,
+        paymentStatus: 1,
+        paymentAmount: 1,
+        payments: 1,
+      })
+      .toArray();
+    res.json({
+      bookings: rows.map((b) => ({
+        ...b,
+        paidAmount: (b.payments || []).reduce(
+          (n, p) => n + Number(p.amount || 0),
+          0,
+        ),
+      })),
+    });
+  } catch (e) {
+    next(e);
+  }
+});
 
 // Record money actually received. Every payment has a unique reference and creates one linked income entry.
 app.post(
-  "/api/admin/bookings/:id/payments",
+  "/admin/bookings/:id/payments",
   requireAdmin,
   async (req, res, next) => {
     try {
@@ -617,7 +613,7 @@ app.post(
 );
 
 app.get(
-  "/api/admin/inventory/:id/movements",
+  "/admin/inventory/:id/movements",
   requireAdmin,
   async (req, res, next) => {
     try {
@@ -637,7 +633,7 @@ app.get(
   },
 );
 app.post(
-  "/api/admin/inventory/:id/movements",
+  "/admin/inventory/:id/movements",
   requireAdmin,
   async (req, res, next) => {
     try {
@@ -739,59 +735,55 @@ app.post(
   },
 );
 
-app.get(
-  "/api/admin/operations/summary",
-  requireAdmin,
-  async (_req, res, next) => {
-    try {
-      const db = getDB();
-      const [entries, items, bookings] = await Promise.all([
-        db.collection("financeEntries").find({}).toArray(),
-        db.collection("inventory").find({}).toArray(),
-        db.collection("bookings").find({}).toArray(),
-      ]);
-      const income = entries
-          .filter((x) => x.type === "income")
-          .reduce((n, x) => n + Number(x.amount || 0), 0),
-        expense = entries
-          .filter((x) => x.type === "expense")
-          .reduce((n, x) => n + Number(x.amount || 0), 0);
-      const lowStock = items.filter(
-        (x) => Number(x.quantity) <= Number(x.reorderLevel || 0),
-      );
-      const unpaid = bookings.reduce(
-        (n, b) =>
-          n +
-          Math.max(
-            0,
-            Number(b.totalAmount || b.quotedAmount || 0) -
-              Number(b.paymentAmount || 0),
-          ),
-        0,
-      );
-      res.json({
-        income,
-        expense,
-        profit: income - expense,
-        inventoryItems: items.length,
-        inventoryValue: items.reduce(
-          (n, x) => n + Number(x.quantity || 0) * Number(x.costPrice || 0),
+app.get("/admin/operations/summary", requireAdmin, async (_req, res, next) => {
+  try {
+    const db = getDB();
+    const [entries, items, bookings] = await Promise.all([
+      db.collection("financeEntries").find({}).toArray(),
+      db.collection("inventory").find({}).toArray(),
+      db.collection("bookings").find({}).toArray(),
+    ]);
+    const income = entries
+        .filter((x) => x.type === "income")
+        .reduce((n, x) => n + Number(x.amount || 0), 0),
+      expense = entries
+        .filter((x) => x.type === "expense")
+        .reduce((n, x) => n + Number(x.amount || 0), 0);
+    const lowStock = items.filter(
+      (x) => Number(x.quantity) <= Number(x.reorderLevel || 0),
+    );
+    const unpaid = bookings.reduce(
+      (n, b) =>
+        n +
+        Math.max(
           0,
+          Number(b.totalAmount || b.quotedAmount || 0) -
+            Number(b.paymentAmount || 0),
         ),
-        lowStock: lowStock.length,
-        lowStockItems: lowStock,
-        unpaidBookings: bookings.filter(
-          (b) =>
-            Number(b.paymentAmount || 0) === 0 &&
-            Number(b.totalAmount || b.quotedAmount || 0) > 0,
-        ).length,
-        unpaidAmount: unpaid,
-      });
-    } catch (e) {
-      next(e);
-    }
-  },
-);
+      0,
+    );
+    res.json({
+      income,
+      expense,
+      profit: income - expense,
+      inventoryItems: items.length,
+      inventoryValue: items.reduce(
+        (n, x) => n + Number(x.quantity || 0) * Number(x.costPrice || 0),
+        0,
+      ),
+      lowStock: lowStock.length,
+      lowStockItems: lowStock,
+      unpaidBookings: bookings.filter(
+        (b) =>
+          Number(b.paymentAmount || 0) === 0 &&
+          Number(b.totalAmount || b.quotedAmount || 0) > 0,
+      ).length,
+      unpaidAmount: unpaid,
+    });
+  } catch (e) {
+    next(e);
+  }
+});
 
 app.use("/api/admin", cmsRoutes);
 app.use("/api", cmsRoutes);
