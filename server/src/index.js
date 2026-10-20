@@ -21,9 +21,7 @@ app.disable("x-powered-by");
 app.use(helmet());
 app.use(
   cors({
-    origin: (
-      process.env.CLIENT_ORIGIN || "https://muhomeservice-client.vercel.app"
-    )
+    origin: (process.env.CLIENT_ORIGIN || "http://localhost:5173")
       .split(",")
       .map((s) => s.trim()),
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
