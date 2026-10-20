@@ -1,0 +1,23 @@
+export const services = [
+  { id: 'electrical', icon: '⚡', name: 'Electrical Service', subtitle: 'বাসা ও অফিসের নিরাপদ বৈদ্যুতিক কাজ', price: 300, items: ['Switch & socket repair', 'Fan / light installation', 'MCB & DB troubleshooting', 'IPS wiring'] },
+  { id: 'cctv', icon: '📹', name: 'CCTV & Security', subtitle: 'ক্যামেরা, DVR ও নিরাপত্তা সিস্টেম', price: 300, items: ['CCTV installation', 'DVR/NVR configuration', 'Mobile live view setup', 'Attendance & access control'] },
+  { id: 'computer', icon: '💻', name: 'Computer & IT', subtitle: 'ডেস্কটপ, ল্যাপটপ ও নেটওয়ার্ক সাপোর্ট', price: 400, items: ['Computer servicing', 'Windows & software setup', 'SSD/RAM upgrade', 'Wi-Fi & LAN troubleshooting'] },
+  { id: 'printer', icon: '🖨️', name: 'Printer Service', subtitle: 'প্রিন্টার, স্ক্যানার ও অফিস প্রিন্টিং', price: 400, items: ['Printer servicing', 'Paper jam troubleshooting', 'Wi-Fi printer setup', 'Scanner & ADF checks'] },
+  { id: 'ac', icon: '❄️', name: 'AC Service', subtitle: 'এসি পরিষ্কার, ইনস্টলেশন ও ত্রুটি নির্ণয়', price: 700, items: ['General servicing', 'Deep cleaning', 'Installation / shifting', 'Leakage inspection'] },
+  { id: 'plumbing', icon: '🚿', name: 'Plumbing', subtitle: 'পানি, পাইপ, ট্যাপ ও স্যানিটারি কাজ', price: 300, items: ['Tap & shower installation', 'Leak repair', 'Drain troubleshooting', 'Pump installation'] },
+  { id: 'network', icon: '📡', name: 'Networking & Wi-Fi', subtitle: 'বাসা ও অফিসের নেটওয়ার্ক সেটআপ', price: 250, items: ['Router configuration', 'LAN cable setup', 'Office network', 'Printer sharing'] },
+  { id: 'ips', icon: '🔋', name: 'IPS / UPS / Solar', subtitle: 'ব্যাকআপ পাওয়ার ও সোলার সাপোর্ট', price: 400, items: ['IPS / UPS setup', 'Battery replacement labour', 'Solar inspection', 'Power troubleshooting'] },
+  { id: 'appliance', icon: '🏠', name: 'Home Appliance', subtitle: 'টিভি, ওয়াশিং মেশিন ও অন্যান্য ইনস্টলেশন', price: 300, items: ['TV wall mounting', 'Washing machine setup', 'Water purifier installation', 'Door lock installation'] },
+  { id: 'cleaning', icon: '🧹', name: 'Cleaning Service', subtitle: 'বাসা ও ছোট অফিস পরিষ্কার', price: 700, items: ['Home cleaning', 'Bathroom / kitchen cleaning', 'Sofa cleaning', 'Office cleaning'] },
+  { id: 'smart-home', icon: '🔐', name: 'Smart Home & Access', subtitle: 'স্মার্ট লক, অ্যাটেনডেন্স ও অটোমেশন', price: 600, items: ['Digital lock', 'Video doorbell', 'Attendance machine', 'Smart switch setup'] },
+  { id: 'maintenance', icon: '🛠️', name: 'General Maintenance', subtitle: 'ছোটখাটো বাসা ও অফিস মেরামত', price: 300, items: ['Shelf / curtain rod fitting', 'Furniture assembly', 'Wall mounting', 'Minor maintenance'] }
+];
+
+export const packages = [
+  { id: 'home-basic', name: 'Home Basic', price: 1999, period: 'বছর', label: 'ছোট বাসার জন্য', visits: 'বছরে সর্বোচ্চ ২টি preventive visit', features: ['Electrical ও plumbing visual inspection', 'Computer ও Wi-Fi basic check', 'CCTV system basic check', 'সাধারণ labour-এ ৫% ছাড়'], note: 'Parts, AC cleaning ও repair labour আলাদা।' },
+  { id: 'home-care', name: 'Home Care', price: 3999, period: 'বছর', label: 'জনপ্রিয় প্যাকেজ', visits: 'বছরে সর্বোচ্চ ৪টি preventive visit', featured: true, features: ['Electrical ও plumbing inspection', 'CCTV ও Wi-Fi/router check', 'একটি computer basic health check', 'একটি AC inspection', 'সাধারণ labour-এ ১০% ছাড়'], note: 'AC servicing, parts ও major repair আলাদা।' },
+  { id: 'home-premium', name: 'Home Premium', price: 6999, period: 'বছর', label: 'বেশি সুবিধা', visits: 'বছরে সর্বোচ্চ ৬টি preventive visit', features: ['Electrical, plumbing ও CCTV inspection', 'Computer, printer ও network check', 'একটি AC general servicing', 'সাধারণ labour-এ ১৫% ছাড়', 'Priority booking'], note: 'অতিরিক্ত AC, parts ও major repair আলাদা।' },
+  { id: 'office-basic', name: 'Office Basic AMC', price: 9999, period: 'বছর', label: 'ছোট অফিস', visits: 'বছরে ৪টি scheduled visit', features: ['সর্বোচ্চ ৫টি computer', '১টি printer ও ৪টি CCTV', 'Basic troubleshooting', 'প্রতিবার service report'], note: 'Parts, consumables ও major repair আলাদা।' },
+  { id: 'office-standard', name: 'Office Standard AMC', price: 19999, period: 'বছর', label: 'মাঝারি অফিস', visits: 'বছরে ৪টি scheduled visit', features: ['সর্বোচ্চ ১০টি computer', '২টি printer ও ৮টি CCTV', 'Router/network check', 'Priority booking ও service report'], note: 'Parts, consumables ও major repair আলাদা।' },
+  { id: 'office-pro', name: 'Office Professional', price: 35000, period: 'বছর থেকে', label: 'কর্পোরেট', visits: 'সাইট survey অনুযায়ী', features: ['সর্বোচ্চ ২০টি computer', '৩টি printer ও ১৬টি CCTV', 'Network & preventive maintenance', 'Scope অনুযায়ী onsite support'], note: 'চূড়ান্ত মূল্য site survey ও scope অনুযায়ী।' }
+];
