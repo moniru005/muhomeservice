@@ -131,3 +131,7 @@ The Admin booking list now includes a **Delete** action. Admins must confirm bef
 
 ### Account profiles and profile photos
 Each signed-in account (Customer, Technician, Staff, and Admin) can open **My Profile** from their dashboard at `/profile` (Admin uses `/profile?account=admin`). The profile page supports updating the account name and phone number and uploading a JPG, PNG, or WebP profile photo up to 3 MB. Email and role are read-only. The backend applies updates only to the account identified by the verified JWT; it does not accept a user ID from the form. Profile photo files are stored under `server/uploads/profiles/`, while the photo URL is stored on the matching account record in MongoDB. Back up uploaded profile photos along with the database.
+
+
+## Hosting (বাংলা)
+See [`HOSTING-DEPLOY-GUIDE-BN.md`](./HOSTING-DEPLOY-GUIDE-BN.md) for Vercel + Render + MongoDB Atlas deployment steps.
