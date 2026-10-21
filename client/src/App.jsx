@@ -44,6 +44,9 @@ import {
   UserRound,
 } from "lucide-react";
 import CMSPage, { PublicCMSPage } from "./pages-CMS.jsx";
+import OperationsWorkspace from "./components/operations-workspace.jsx";
+import CustomerQuotations from "./components/customer-quotations.jsx";
+import BusinessControl from "./components/business-control.jsx";
 
 const API = (
   import.meta.env.VITE_API_URL || "http://localhost:5000/api"
@@ -97,6 +100,7 @@ function RoutedApp() {
         <Route path="/admin/cms" element={<CMSPage />} />
         <Route path="/p/:slug" element={<PublicCMSPage />} />
         <Route path="/admin/management" element={<AdminOperationsPage />} />
+        <Route path="/admin/business-control" element={<BusinessControl />} />
         <Route path="/admin/roles" element={<RolePermissionsPage />} />
         <Route path="/login" element={<AccountPage mode="login" />} />
         <Route path="/forgot-password" element={<PasswordRecoveryPage />} />
@@ -111,7 +115,10 @@ function RoutedApp() {
         />
         <Route path="/profile" element={<ProfilePage />} />
         <Route path="/dashboard" element={<UserDashboard />} />
-        <Route path="/technician/dashboard" element={<UserDashboard />} />
+        <Route path="/technician/dashboard" element={<UserDashboard mode="technician" />} />
+        <Route path="/operations" element={<OperationsWorkspace />} />
+        <Route path="/technician/operations" element={<OperationsWorkspace mode="technician" />} />
+        <Route path="/my-quotations" element={<CustomerQuotations />} />
         <Route path="/track" element={<TicketTrackingPage />} />
         <Route
           path="*"

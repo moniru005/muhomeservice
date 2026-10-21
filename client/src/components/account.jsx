@@ -348,7 +348,7 @@ export function PasswordRecoveryPage({ reset = false }) {
   );
 }
 
-export function UserDashboard() {
+export function UserDashboard({ mode = "auto" }) {
   const [user, setUser] = useState(() =>
     JSON.parse(sessionStorage.getItem("muUser") || "null"),
   );
@@ -358,6 +358,19 @@ export function UserDashboard() {
   const [selectedTechnicians, setSelectedTechnicians] = useState({});
   const [assigning, setAssigning] = useState("");
   const [notice, setNotice] = useState("");
+  const isTechnicianView = mode === "technician" || user?.role === "technician";
+  const isStaffView = user?.role === "staff";
+  const nextTechnicianStatus = { Assigned: "On the way", "On the way": "Inspection", Inspection: "In progress", "In progress": "Completed" };
+  async function updateJobStatus(bookingId, status) {
+    const token = sessionStorage.getItem("muUserToken"); setError(""); setNotice(""); setAssigning(bookingId);
+    try {
+      const r = await fetch(`${API}/technician/bookings/${bookingId}/status`, { method: "PATCH", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify({ status }) });
+      const d = await r.json(); if (!r.ok) throw new Error(d.message || "Status আপডেট করা যায়নি");
+      setNotice(d.message || "কাজের Status আপডেট হয়েছে।");
+      const refreshed = await fetch(`${API}/dashboard/summary`, { headers: { Authorization: `Bearer ${token}` } });
+      const summary = await refreshed.json(); if (refreshed.ok) setData(summary);
+    } catch (e) { setError(e.message); } finally { setAssigning(""); }
+  }
   useEffect(() => {
     const token = sessionStorage.getItem("muUserToken");
     if (!token) {
@@ -404,11 +417,13 @@ export function UserDashboard() {
       <div className="container">
         <div className="dashboard-title">
           <div>
-            <span className="section-kicker">MY ACCOUNT</span>
-            <h1>স্বাগতম, {user?.name || "ব্যবহারকারী"}</h1>
-            <p>আপনার MU Home Service অ্যাকাউন্ট ও সার্ভিস আপডেট।</p>
+            <span className="section-kicker">{isTechnicianView ? "TECHNICIAN WORKSPACE" : isStaffView ? "STAFF WORKSPACE" : "MY ACCOUNT"}</span>
+            <h1>{isTechnicianView ? "Technician Dashboard" : isStaffView ? "Staff Dashboard" : `স্বাগতম, ${user?.name || "ব্যবহারকারী"}`}</h1>
+            <p>{isTechnicianView ? "আপনার নামে Assign করা কাজ, সময়সূচি ও কাজের অগ্রগতি পরিচালনা করুন।" : isStaffView ? "Booking queue দেখুন এবং অনুমতি থাকলে Technician assign করুন।" : "আপনার MU Home Service অ্যাকাউন্ট ও সার্ভিস আপডেট।"}</p>
           </div>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            {(isTechnicianView || isStaffView || user?.role === "admin") && <Link className="btn btn-primary" to={isTechnicianView ? "/technician/operations" : "/operations"}>Service Operations</Link>}
+            {user?.role === "customer" && <Link className="btn btn-primary" to="/my-quotations">আমার Quotation</Link>}
             <Link className="btn btn-outline" to="/profile">
               প্রোফাইল আপডেট
             </Link>
@@ -445,12 +460,10 @@ export function UserDashboard() {
             <div className="admin-table-card">
               <div className="table-toolbar">
                 <div>
-                  <h2>সার্ভিস হিস্ট্রি</h2>
-                  <p>আপনার সাম্প্রতিক বুকিং</p>
+                  <h2>{isTechnicianView ? "আমার Assign করা কাজ" : isStaffView ? "Booking Management" : "সার্ভিস হিস্ট্রি"}</h2>
+                  <p>{isTechnicianView ? "প্রতিটি কাজের Status পরবর্তী ধাপে আপডেট করুন।" : isStaffView ? "নতুন ও চলমান Booking-এর তালিকা" : "আপনার সাম্প্রতিক বুকিং"}</p>
                 </div>
-                <Link className="btn btn-primary" to="/book">
-                  নতুন বুকিং
-                </Link>
+                {!isTechnicianView && !isStaffView && <Link className="btn btn-primary" to="/book">নতুন বুকিং</Link>}
               </div>
               {data.bookings?.length ? (
                 <div className="table-scroll">
@@ -462,6 +475,7 @@ export function UserDashboard() {
                         <th>তারিখ</th>
                         <th>স্ট্যাটাস</th>
                         {data.canAssign && <th>Technician Assign</th>}
+                        {isTechnicianView && <th>কাজের পরবর্তী ধাপ</th>}
                       </tr>
                     </thead>
                     <tbody>
@@ -483,6 +497,7 @@ export function UserDashboard() {
                             <button className="btn btn-primary assign-technicians-button" disabled={assigning === b._id} onClick={() => saveTechnicianAssignment(b._id)}>{assigning === b._id ? "Saving..." : "Assign"}</button>
                             </div>
                           </td>}
+                          {isTechnicianView && <td><div style={{display:"grid",gap:6,minWidth:130}}><span>{b.status}</span>{nextTechnicianStatus[b.status] && <button className="btn btn-primary btn-small" disabled={assigning === b._id} onClick={() => updateJobStatus(b._id, nextTechnicianStatus[b.status])}>{assigning === b._id ? "Saving…" : nextTechnicianStatus[b.status]}</button>}</div></td>}
                         </tr>
                       ))}
                     </tbody>
@@ -491,9 +506,9 @@ export function UserDashboard() {
               ) : (
                 <div className="empty-state">
                   <ClipboardList size={32} />
-                  <h3>এখনো কোনো বুকিং নেই</h3>
-                  <p>{data.canAssign ? "কাস্টমারের নতুন বুকিং এলে এখানে দেখা যাবে এবং Technician assign করতে পারবেন।" : "আপনার প্রথম সার্ভিসটি এখনই বুক করুন।"}</p>
-                  {!data.canAssign && <Link className="btn btn-primary" to="/book">সার্ভিস বুক করুন</Link>}
+                  <h3>{isTechnicianView ? "এখনো কোনো কাজ Assign করা হয়নি" : isStaffView ? "এখনো কোনো Booking নেই" : "এখনো কোনো বুকিং নেই"}</h3>
+                  <p>{isTechnicianView ? "Admin বা অনুমতিপ্রাপ্ত Staff আপনাকে Booking Assign করলে এখানে দেখা যাবে।" : isStaffView ? "নতুন Customer Booking এলে এখানে দেখা যাবে।" : "আপনার প্রথম সার্ভিসটি এখনই বুক করুন।"}</p>
+                  {!isTechnicianView && !isStaffView && <Link className="btn btn-primary" to="/book">সার্ভিস বুক করুন</Link>}
                 </div>
               )}
             </div>
@@ -532,6 +547,10 @@ export function ProfilePage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [passwordForm, setPasswordForm] = useState({currentPassword:"",newPassword:"",confirmPassword:""});
+  const [passwordBusy, setPasswordBusy] = useState(false);
+  const [passwordError, setPasswordError] = useState("");
+  const [passwordNotice, setPasswordNotice] = useState("");
   const origin = API.replace(/\/api\/?$/, "");
   const resolveProfilePhoto = (value) => {
     if (!value) return "";
@@ -562,6 +581,14 @@ export function ProfilePage() {
       })
       .catch((e) => setError(e.message));
   }, []);
+  async function changePassword(e) {
+    e.preventDefault(); setPasswordBusy(true); setPasswordError(""); setPasswordNotice("");
+    try {
+      const r = await fetch(`${API}/auth/me/password`, {method:"PATCH",headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},body:JSON.stringify(passwordForm)});
+      const d = await r.json(); if(!r.ok) throw new Error(d.message || "পাসওয়ার্ড পরিবর্তন করা যায়নি");
+      setPasswordNotice(d.message || "পাসওয়ার্ড পরিবর্তন হয়েছে।"); setPasswordForm({currentPassword:"",newPassword:"",confirmPassword:""});
+    } catch(e) { setPasswordError(e.message); } finally { setPasswordBusy(false); }
+  }
   function choosePhoto(e) {
     const f = e.target.files?.[0];
     if (!f) return;
@@ -756,6 +783,16 @@ export function ProfilePage() {
               ফিরে যান
             </Link>
           </div>
+        </form>
+        <form onSubmit={changePassword} className="admin-table-card" style={{padding:28,marginTop:22}}>
+          <span className="section-kicker">SECURITY</span><h2 style={{marginTop:6}}>পাসওয়ার্ড পরিবর্তন</h2><p>নিরাপত্তার জন্য বর্তমান পাসওয়ার্ড দিন এবং নতুন পাসওয়ার্ড নিশ্চিত করুন।</p>
+          {passwordError && <div className="alert error" role="alert">{passwordError}</div>}{passwordNotice && <div className="alert success" role="status">{passwordNotice}</div>}
+          <div className="form-grid">
+            <label>বর্তমান পাসওয়ার্ড *<input required type="password" autoComplete="current-password" value={passwordForm.currentPassword} onChange={e=>setPasswordForm({...passwordForm,currentPassword:e.target.value})}/></label>
+            <label>নতুন পাসওয়ার্ড *<input required minLength="8" type="password" autoComplete="new-password" value={passwordForm.newPassword} onChange={e=>setPasswordForm({...passwordForm,newPassword:e.target.value})} placeholder="কমপক্ষে ৮ অক্ষর"/></label>
+            <label>নতুন পাসওয়ার্ড নিশ্চিত করুন *<input required minLength="8" type="password" autoComplete="new-password" value={passwordForm.confirmPassword} onChange={e=>setPasswordForm({...passwordForm,confirmPassword:e.target.value})}/></label>
+          </div>
+          <div style={{marginTop:20}}><button className="btn btn-primary" disabled={passwordBusy}>{passwordBusy?"পরিবর্তন হচ্ছে…":"পাসওয়ার্ড পরিবর্তন করুন"}</button></div>
         </form>
       </div>
     </main>

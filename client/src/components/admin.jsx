@@ -269,12 +269,6 @@ export function AdminPage() {
             <Link className="btn btn-outline" to="/admin/management">
               Management Center
             </Link>
-            <Link className="btn btn-outline" to="/admin/roles">
-              Role & Permissions
-            </Link>
-            <button className="btn btn-outline" onClick={refresh}>
-              <RefreshCw size={16} /> Refresh
-            </button>
           </div>
         </div>
         {error && <div className="alert error">{error}</div>}
@@ -645,7 +639,15 @@ export function ContentManagerPage() {
                 অথবা image URL ব্যবহার করুন।
               </p>
             </div>
-            <div className="editor-tabs">
+            <div className="admin-business-control-link">
+          <div>
+            <span className="section-kicker">PHASE 3 · BUSINESS CONTROL</span>
+            <strong>Finance, Performance &amp; Reports</strong>
+            <p>Advanced reports, technician performance, customer feedback এবং audit log একসাথে দেখুন।</p>
+          </div>
+          <Link to="/admin/business-control" className="btn btn-primary">Open Business Control →</Link>
+        </div>
+        <div className="editor-tabs">
               <button
                 className={`btn ${tab === "services" ? "btn-primary" : "btn-outline"}`}
                 onClick={() => setTab("services")}
@@ -832,6 +834,8 @@ export function AdminOperationsPage() {
   });
   const [editingItemId, setEditingItemId] = useState("");
   const [opsBookings, setOpsBookings] = useState([]);
+  const [serviceReports, setServiceReports] = useState([]);
+  const [partsRequests, setPartsRequests] = useState([]);
   const [payment, setPayment] = useState({ bookingId: "", amount: "", method: "cash", reference: "" });
   const [movementItemId, setMovementItemId] = useState("");
   const [movement, setMovement] = useState({ type: "out", quantity: "1", unitCost: "0", bookingId: "", note: "" });
@@ -852,16 +856,13 @@ export function AdminOperationsPage() {
   async function load() {
     setError("");
     try {
-      const [f, i, t, st, summary, bookingResult] = await Promise.all([
-        request("/admin/finance"),
-        request("/admin/inventory"),
-        request("/admin/technicians"),
-        request("/admin/staff"),
-        request("/admin/operations/summary"),
-        request("/admin/operations/bookings"),
+      const [f, i, t, st, summary, bookingResult, reportResult, partsResult] = await Promise.all([
+        request("/admin/finance"), request("/admin/inventory"), request("/admin/technicians"), request("/admin/staff"),
+        request("/admin/operations/summary"), request("/admin/operations/bookings"),
+        request("/operations/service-reports"), request("/operations/parts-requests"),
       ]);
       setData({ ...f, ...i, ...t, ...st, ...summary });
-      setOpsBookings(bookingResult.bookings || []);
+      setOpsBookings(bookingResult.bookings || []); setServiceReports(reportResult.reports || []); setPartsRequests(partsResult.requests || []);
     } catch (e) {
       setError(e.message);
     }
@@ -1019,9 +1020,14 @@ export function AdminOperationsPage() {
             <h1>Admin Management Center</h1>
             <p>Technician, আয়-ব্যয়, রিপোর্ট ও ইনভেন্টরি পরিচালনা করুন।</p>
           </div>
-          <Link to="/admin" className="btn btn-outline">
-            ← Booking Dashboard
-          </Link>
+          <div className="admin-heading-actions">
+            <Link to="/admin" className="btn btn-outline">
+              <ClipboardList size={15} /> Booking Dashboard
+            </Link>
+            <Link to="/admin/roles" className="btn btn-outline">
+              <ShieldCheck size={15} /> Permissions
+            </Link>
+          </div>
         </div>
         {error && <div className="alert error">{error}</div>}
         {notice && <div className="alert success">{notice}</div>}
@@ -1033,6 +1039,8 @@ export function AdminOperationsPage() {
             ["finance", "আয়-ব্যয়"],
             ["payments", "Booking Payments"],
             ["inventory", "Inventory"],
+            ["service-operations", "Service Operations"],
+            ["business-control", "Business Control"],
           ].map(([v, l]) => (
             <button
               key={v}
@@ -1163,7 +1171,7 @@ export function AdminOperationsPage() {
             </div>
             <div className="table-scroll">
               <table className="bookings-table">
-                <thead><tr><th>নাম</th><th>Email</th><th>Phone</th><th>Registration Date</th><th>Status / Action</th><th>Technician Assign Permission</th></tr></thead>
+                <thead><tr><th>নাম</th><th>Email</th><th>Phone</th><th>Registration Date</th><th>Status / Action</th><th>Permissions</th></tr></thead>
                 <tbody>
                   {data.staff.map((member) => {
                     const status = member.accountStatus || "pending";
@@ -1179,7 +1187,7 @@ export function AdminOperationsPage() {
                           <option value="suspended">Suspended</option>
                         </select>
                       </td>
-                      <td><label style={{ display: "flex", gap: 8, alignItems: "center" }}><input type="checkbox" checked={(member.permissions || []).includes("assignTechnicians")} disabled={status !== "approved"} onChange={async e => { try { await request(`/admin/staff/${member._id}/assign-permission`, { method: "PATCH", body: JSON.stringify({ enabled: e.target.checked }) }); setNotice("Technician assign permission আপডেট হয়েছে।"); await load(); } catch (err) { setError(err.message); } }} /> Assign technician(s)</label></td>
+                      <td><div style={{display:"grid",gap:6,minWidth:190}}>{[["assignTechnicians","Assign technician(s)"],["manageQuotations","Create quotations"],["manageBookings","Manage bookings"],["manageInventory","Manage inventory"]].map(([permission,label])=><label key={permission} style={{display:"flex",gap:8,alignItems:"center"}}><input type="checkbox" checked={(member.permissions||[]).includes(permission)} disabled={status!=="approved"} onChange={async e=>{try{await request(`/admin/staff/${member._id}/permissions`,{method:"PATCH",body:JSON.stringify({permission,enabled:e.target.checked})});setNotice(`${label} permission আপডেট হয়েছে।`);await load();}catch(err){setError(err.message)}}}/>{label}</label>)}</div></td>
                     </tr>;
                   })}
                   {data.staff.length === 0 && <tr><td colSpan="6">কোনো Staff account পাওয়া যায়নি।</td></tr>}
@@ -1187,6 +1195,12 @@ export function AdminOperationsPage() {
               </table>
             </div>
           </div>
+        )}
+        {tab === "service-operations" && (
+          <div className="admin-table-card"><div className="table-toolbar"><div><h2>Service Operations</h2><p>Service Reports, Parts Requests ও Notification পরিচালনা করুন।</p></div><Link to="/operations" className="btn btn-primary">Open Service Operations →</Link></div></div>
+        )}
+        {tab === "business-control" && (
+          <div className="admin-table-card"><div className="table-toolbar"><div><h2>Business Control</h2><p>Quotation, Inventory ও Finance workflow পরিচালনা করুন।</p></div><Link to="/admin/business-control" className="btn btn-primary">Open Business Control →</Link></div></div>
         )}
         {tab === "finance" && (
           <>

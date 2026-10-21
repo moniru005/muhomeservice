@@ -85,6 +85,18 @@ router.post('/reset-password', async (req, res, next) => {
  } catch (e) { next(e); }
 });
 
+
+router.patch('/me/password', requireAuth, async(req,res,next)=>{try{
+ if(!ObjectId.isValid(req.user.sub))return res.status(401).json({message:'Session expired'});
+ const currentPassword=String(req.body.currentPassword||''),newPassword=String(req.body.newPassword||''),confirmPassword=String(req.body.confirmPassword||'');
+ if(newPassword.length<8)return res.status(400).json({message:'নতুন পাসওয়ার্ড কমপক্ষে ৮ অক্ষরের হতে হবে।'});
+ if(newPassword!==confirmPassword)return res.status(400).json({message:'নতুন পাসওয়ার্ড ও confirmation মিলছে না।'});
+ const collection=getDB().collection(req.user.role==='admin'?'admins':'users');const account=await collection.findOne({_id:new ObjectId(req.user.sub)});
+ if(!account||!account.passwordHash||!(await bcrypt.compare(currentPassword,account.passwordHash)))return res.status(400).json({message:'বর্তমান পাসওয়ার্ড সঠিক নয়।'});
+ const passwordHash=await bcrypt.hash(newPassword,12);await collection.updateOne({_id:account._id},{$set:{passwordHash,passwordChangedAt:new Date(),updatedAt:new Date()}});
+ res.json({message:'পাসওয়ার্ড সফলভাবে পরিবর্তন হয়েছে।'});
+}catch(e){next(e)}});
+
 router.get('/me', requireAuth, async (req,res,next)=>{try{
  if(!ObjectId.isValid(req.user.sub)) return res.status(401).json({message:'Session expired'});
  const collection = req.user.role === 'admin' ? 'admins' : 'users';

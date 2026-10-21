@@ -135,3 +135,7 @@ Each signed-in account (Customer, Technician, Staff, and Admin) can open **My Pr
 
 ## Hosting (বাংলা)
 See [`HOSTING-DEPLOY-GUIDE-BN.md`](./HOSTING-DEPLOY-GUIDE-BN.md) for Vercel + Render + MongoDB Atlas deployment steps.
+
+## Phase 3 — Business Control
+
+Business Control dashboard: `/admin/business-control`. Details, endpoints, feedback API and verification caveats are documented in `PHASE-3-BUSINESS-CONTROL-BN.md`.

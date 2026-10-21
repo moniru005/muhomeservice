@@ -104,6 +104,26 @@ router.patch('/bookings/:id/technicians', requireAuth, async (req, res, next) =>
   } catch (err) { next(err); }
 });
 
+
+// Technician-only work queue and status transitions. Ownership is always checked on the server.
+router.patch('/technician/bookings/:id/status', requireAuth, requireRole('technician'), async (req, res, next) => {
+  try {
+    if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ message: 'Invalid booking ID' });
+    const db = getDB();
+    const technician = await db.collection('users').findOne({ _id: new ObjectId(req.user.sub), role: 'technician', accountStatus: 'approved', technicianStatus: 'approved' });
+    if (!technician) return res.status(403).json({ message: 'অনুমোদিত Technician অ্যাকাউন্ট প্রয়োজন।' });
+    const nextStatus = String(req.body.status || '');
+    const transitions = { 'Assigned': 'On the way', 'On the way': 'Inspection', 'Inspection': 'In progress', 'In progress': 'Completed' };
+    const booking = await db.collection('bookings').findOne({ _id: new ObjectId(req.params.id), $or: [{ technicianId: req.user.sub }, { technicianIds: req.user.sub }] });
+    if (!booking) return res.status(404).json({ message: 'এই Booking আপনার নামে assign করা নেই।' });
+    if (transitions[booking.status] !== nextStatus) return res.status(409).json({ message: `এই ধাপে ${booking.status} থেকে ${transitions[booking.status] || 'পরবর্তী কোনো Status'} করা যাবে।` });
+    const now = new Date();
+    const result = await db.collection('bookings').updateOne({ _id: booking._id, status: booking.status, $or: [{ technicianId: req.user.sub }, { technicianIds: req.user.sub }] }, { $set: { status: nextStatus, updatedAt: now, [`statusTimestamps.${nextStatus.replace(/[^a-zA-Z0-9]/g, '_')}`]: now }, $push: { statusHistory: { status: nextStatus, at: now, by: req.user.sub, byRole: 'technician' } } });
+    if (!result.modifiedCount) return res.status(409).json({ message: 'Booking Status পরিবর্তিত হয়েছে। Refresh করে আবার চেষ্টা করুন।' });
+    res.json({ message: 'কাজের Status আপডেট হয়েছে।', status: nextStatus });
+  } catch (err) { next(err); }
+});
+
 router.delete('/admin/bookings/:id', requireAdmin, async (req, res, next) => {
   try {
     if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ message: 'Invalid booking ID' });

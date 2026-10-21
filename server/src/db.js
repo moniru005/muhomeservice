@@ -36,3 +36,8 @@ export function getDB() {
   if (!database) throw new Error('Database not connected');
   return database;
 }
+
+export function getMongoClient() {
+  if (!client) throw new Error('MongoDB client not connected');
+  return client;
+}
