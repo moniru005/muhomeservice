@@ -454,3 +454,23 @@ button,a,input,select,textarea{transition:background-color .18s ease,border-colo
 .admin-profile-dropdown a:hover,.admin-profile-dropdown button:hover{background:#f0f5fb;color:#2451c8}
 .admin-profile-dropdown button{border-top:1px solid #edf1f6;border-radius:0 0 9px 9px;margin-top:3px;padding-top:13px;color:#b42332}
 @media(max-width:600px){.admin-welcome{display:none}.admin-profile-dropdown{right:0}}
+
+/* Management Center: colorful summary cards */
+.admin-page .management-summary-grid{gap:16px!important;margin:0 0 24px!important}
+.admin-page .management-summary-card{min-height:154px;padding:23px!important;border-radius:19px!important;overflow:hidden;isolation:isolate;box-shadow:0 10px 26px rgba(28,45,84,.055)!important;transition:transform .2s ease,box-shadow .2s ease,border-color .2s ease!important}
+.admin-page .management-summary-card::after{content:"";position:absolute;width:125px;height:125px;right:-36px;bottom:-55px;border-radius:50%;background:currentColor;opacity:.055;z-index:-1}
+.admin-page .management-summary-card:hover{transform:translateY(-4px);box-shadow:0 16px 32px rgba(28,45,84,.11)!important}
+.admin-page .management-summary-card .management-summary-icon{position:absolute;right:18px;top:18px;width:43px;height:43px;display:grid;place-items:center;border-radius:14px}
+.admin-page .management-summary-card .management-summary-icon svg{position:static;width:22px;height:22px;padding:0;background:transparent;color:inherit}
+.admin-page .management-summary-card>span{padding-right:54px;color:#53647d;font-size:12px;font-weight:750}
+.admin-page .management-summary-card>b{display:block;margin-top:10px;font-size:clamp(25px,2.4vw,33px);line-height:1.15;letter-spacing:-.035em;color:#152747}
+.admin-page .management-summary-card>small{display:block;margin-top:12px;font-size:11px;font-weight:650;color:#61728a}
+.admin-page .management-summary-card.summary-income{color:#16876d;background:linear-gradient(135deg,#f0fdf8 0%,#fff 85%)!important;border-color:#b8ecda!important}
+.admin-page .management-summary-card.summary-income .management-summary-icon{background:#d4f8e9;color:#0e9b75}
+.admin-page .management-summary-card.summary-expense{color:#d97728;background:linear-gradient(135deg,#fff7ed 0%,#fff 85%)!important;border-color:#fed7aa!important}
+.admin-page .management-summary-card.summary-expense .management-summary-icon{background:#ffead2;color:#d97706}
+.admin-page .management-summary-card.summary-balance{color:#4f46e5;background:linear-gradient(135deg,#eef2ff 0%,#fff 85%)!important;border-color:#c7d2fe!important}
+.admin-page .management-summary-card.summary-balance .management-summary-icon{background:#dfe5ff;color:#4f46e5}
+.admin-page .management-summary-card.summary-inventory{color:#0284a8;background:linear-gradient(135deg,#ecfeff 0%,#fff 85%)!important;border-color:#a5f3fc!important}
+.admin-page .management-summary-card.summary-inventory .management-summary-icon{background:#cffafe;color:#0891b2}
+@media(max-width:600px){.admin-page .management-summary-card{min-height:130px;padding:16px!important}.admin-page .management-summary-card .management-summary-icon{right:12px;top:12px;width:35px;height:35px}.admin-page .management-summary-card>span{padding-right:40px}.admin-page .management-summary-card>b{font-size:24px}.admin-page .management-summary-card>small{font-size:10px;margin-top:9px}}

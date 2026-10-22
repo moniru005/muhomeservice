@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import { ContentManagerPage } from "./components/admin.jsx";
 import {
   Activity,
   ArrowDown,
@@ -7,6 +8,8 @@ import {
   ArrowUp,
   BarChart3,
   BookOpen,
+  CalendarDays,
+  ClipboardCheck,
   Check,
   CheckCircle2,
   ChevronDown,
@@ -34,13 +37,15 @@ import {
   Search,
   Send,
   Settings,
-  ShieldCheck,
   Sparkles,
   Trash2,
   Upload,
   Users,
   Workflow,
   Wrench,
+  Building2,
+  ShieldCheck,
+  Filter,
   X,
 } from "lucide-react";
 import "./cms.css";
@@ -172,6 +177,8 @@ const navGroups = [
       ["pages", "Visual page builder", Layers],
       ["media", "Media library", FileImage],
       ["catalog", "Services & packages", Wrench],
+      ["business-control", "Business Control", Building2],
+      ["management-center", "Management Center", ShieldCheck],
     ],
   },
   {
@@ -552,20 +559,36 @@ export default function CMSPage() {
         {navGroups.map((group) => (
           <div className="pro-nav-group" key={group.title}>
             <p>{group.title}</p>
-            {group.items.map(([id, label, Icon]) => (
-              <button
-                key={id}
-                className={`pro-nav-item ${tab === id ? "active" : ""}`}
-                onClick={() => {
-                  setTab(id);
-                  setMobileNav(false);
-                }}
-              >
-                <Icon size={18} />
-                <span>{label}</span>
-                {id === "pages" && <small>{pages.length}</small>}
-              </button>
-            ))}
+            {group.items.map(([id, label, Icon]) =>
+              ["business-control", "management-center"].includes(id) ? (
+                <Link
+                  key={id}
+                  to={
+                    id === "business-control"
+                      ? "/admin/business-control"
+                      : "/admin/management"
+                  }
+                  className="pro-nav-item"
+                  onClick={() => setMobileNav(false)}
+                >
+                  <Icon size={18} />
+                  <span>{label}</span>
+                </Link>
+              ) : (
+                <button
+                  key={id}
+                  className={`pro-nav-item ${tab === id ? "active" : ""}`}
+                  onClick={() => {
+                    setTab(id);
+                    setMobileNav(false);
+                  }}
+                >
+                  <Icon size={18} />
+                  <span>{label}</span>
+                  {id === "pages" && <small>{pages.length}</small>}
+                </button>
+              ),
+            )}
           </div>
         ))}
         <div className="pro-sidebar-bottom">
@@ -700,13 +723,15 @@ export default function CMSPage() {
                   ? "Published content"
                   : "Draft workspace"}
               </span>
-              <button
-                className="pro-button pro-button-light"
-                onClick={load}
-                disabled={busy}
-              >
-                <RefreshCw size={16} /> Refresh
-              </button>
+              {tab !== "bookings" && (
+                <button
+                  className="pro-button pro-button-light"
+                  onClick={load}
+                  disabled={busy}
+                >
+                  <RefreshCw size={16} /> Refresh
+                </button>
+              )}
               {tab === "pages" && (
                 <>
                   <button
@@ -1616,71 +1641,14 @@ export default function CMSPage() {
             </section>
           )}
           {tab === "catalog" && (
-            <div className="pro-catalog-grid">
-              <article className="pro-card pro-catalog-card">
-                <span className="pro-catalog-icon blue">
-                  <Wrench size={22} />
-                </span>
-                <span className="pro-card-kicker">SERVICE MANAGEMENT</span>
-                <h2>Services</h2>
-                <strong>{services.length}</strong>
-                <p>
-                  ডাটাবেজে থাকা সার্ভিসের নাম, বিবরণ, মূল্য ও ছবি পরিচালনা করুন।
-                </p>
-                <Link
-                  to="/admin/content"
-                  className="pro-button pro-button-blue"
-                >
-                  Open service editor <ChevronRight size={16} />
-                </Link>
-              </article>
-              <article className="pro-card pro-catalog-card">
-                <span className="pro-catalog-icon violet">
-                  <BookOpen size={22} />
-                </span>
-                <span className="pro-card-kicker">PACKAGE MANAGEMENT</span>
-                <h2>Packages</h2>
-                <strong>{packages.length}</strong>
-                <p>প্যাকেজের মূল্য, সুবিধা এবং বর্ণনা সম্পাদনা করুন।</p>
-                <Link
-                  to="/admin/content"
-                  className="pro-button pro-button-blue"
-                >
-                  Open package editor <ChevronRight size={16} />
-                </Link>
-              </article>
-              <article className="pro-card pro-catalog-card">
-                <span className="pro-catalog-icon orange">
-                  <ImagePlus size={22} />
-                </span>
-                <span className="pro-card-kicker">WEBSITE ASSETS</span>
-                <h2>Media library</h2>
-                <strong>{media.length}</strong>
-                <p>সার্ভিস ও ওয়েবসাইটের ছবি এক জায়গায় পরিচালনা করুন।</p>
-                <button
-                  className="pro-button pro-button-light"
-                  onClick={() => setTab("media")}
-                >
-                  Open media library <ChevronRight size={16} />
-                </button>
-              </article>
-            </div>
-          )}
-          {tab === "bookings" && (
-            <section className="pro-card pro-placeholder-panel">
-              <span className="pro-catalog-icon blue">
-                <ClipboardList size={23} />
-              </span>
-              <h2>Booking operations</h2>
-              <p>
-                Booking status, ticket details এবং customer request পরিচালনার
-                জন্য মূল operations dashboard ব্যবহার করুন।
-              </p>
-              <Link className="pro-button pro-button-blue" to="/admin">
-                Open bookings dashboard <ChevronRight size={16} />
-              </Link>
+            <section
+              className="pro-card pro-catalog-editor"
+              aria-label="Service and package management"
+            >
+              <ContentManagerPage embedded />
             </section>
           )}
+          {tab === "bookings" && <CMSBookingsPanel />}
           {tab === "team" && (
             <section className="pro-card pro-placeholder-panel">
               <span className="pro-catalog-icon violet">
@@ -1799,6 +1767,296 @@ export default function CMSPage() {
     </main>
   );
 }
+function CMSBookingsPanel() {
+  const token = sessionStorage.getItem("muAdminToken") || "";
+  const [bookings, setBookings] = useState([]);
+  const [technicians, setTechnicians] = useState([]);
+  const [stats, setStats] = useState({
+    total: 0,
+    fresh: 0,
+    progress: 0,
+    completed: 0,
+  });
+  const [status, setStatus] = useState("");
+  const [query, setQuery] = useState("");
+  const [selections, setSelections] = useState({});
+  const [notice, setNotice] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const api = async (path, opts = {}) => {
+    const res = await fetch(`${API}${path}`, {
+      ...opts,
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(opts.headers || {}),
+      },
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || "Request failed");
+    return data;
+  };
+  const refresh = async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const [b, st, t] = await Promise.all([
+        api(
+          `/admin/bookings?status=${encodeURIComponent(status)}&q=${encodeURIComponent(query)}`,
+        ),
+        api("/admin/stats"),
+        api("/admin/technicians"),
+      ]);
+      setBookings(b.bookings || []);
+      setStats(st || {});
+      setTechnicians(
+        (t.technicians || []).filter(
+          (x) => (x.technicianStatus || x.accountStatus) === "approved",
+        ),
+      );
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => {
+    refresh();
+  }, [status]);
+  const updateStatus = async (id, next) => {
+    try {
+      await api(`/admin/bookings/${id}/status`, {
+        method: "PATCH",
+        body: JSON.stringify({ status: next }),
+      });
+      setNotice("Booking status আপডেট হয়েছে।");
+      await refresh();
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+  const assign = async (b) => {
+    const technicianIds =
+      selections[b._id] ??
+      b.technicianIds ??
+      (b.technicianId ? [b.technicianId] : []);
+    try {
+      await api(`/bookings/${b._id}/technicians`, {
+        method: "PATCH",
+        body: JSON.stringify({ technicianIds }),
+      });
+      setNotice("Technician assignment আপডেট হয়েছে।");
+      await refresh();
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+  const remove = async (b) => {
+    if (
+      !window.confirm(`আপনি কি ${b.ticketId || "এই booking"} মুছে ফেলতে চান?`)
+    )
+      return;
+    try {
+      await api(`/admin/bookings/${b._id}`, { method: "DELETE" });
+      setNotice("Booking মুছে ফেলা হয়েছে।");
+      await refresh();
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+  const statuses = [
+    "New",
+    "Contacted",
+    "Assigned",
+    "On the way",
+    "Inspection",
+    "Quotation sent",
+    "Approved",
+    "In progress",
+    "Completed",
+    "Cancelled",
+  ];
+  return (
+    <section className="pro-card pro-bookings-panel">
+      <div className="pro-card-heading">
+        <div>
+          <span className="pro-card-kicker">BOOKING OPERATIONS</span>
+          <p>
+            সকল service request, customer details, booking status এবং technician
+            assignment এখান থেকে পরিচালনা করুন।
+          </p>
+        </div>
+        <div className="pro-bookings-heading-actions">
+          <Link
+            className="pro-button pro-button-light pro-operation-button"
+            to="/operations"
+          >
+            <ExternalLink size={16} /> <span>Operation Dashboard</span>
+          </Link>
+          <button className="pro-button pro-refresh-button" onClick={refresh}>
+            <RefreshCw size={16} /> <span>Refresh</span>
+          </button>
+        </div>
+      </div>
+      {error && <div className="pro-alert error">{error}</div>}
+      {notice && <div className="pro-alert success">{notice}</div>}
+      <div className="pro-metrics-grid">
+        {[
+          ["Total bookings", stats.total || 0, CalendarDays, "total"],
+          ["New requests", stats.fresh || 0, ClipboardCheck, "new"],
+          ["In progress", stats.progress || 0, Activity, "progress"],
+          ["Completed", stats.completed || 0, CheckCircle2, "completed"],
+        ].map(([label, value, MetricIcon, tone]) => (
+          <article
+            className={`pro-metric pro-booking-metric pro-booking-metric-${tone}`}
+            key={label}
+          >
+            <span className="pro-booking-metric-icon">
+              <MetricIcon size={21} strokeWidth={2.2} />
+            </span>
+            <div className="pro-metric-copy">
+              <span>{label}</span>
+              <strong>{value}</strong>
+              <small>
+                {tone === "total"
+                  ? "All service requests"
+                  : tone === "new"
+                    ? "Awaiting first action"
+                    : tone === "progress"
+                      ? "Currently being handled"
+                      : "Successfully finished"}
+              </small>
+            </div>
+            <span className="pro-booking-metric-glow" aria-hidden="true" />
+          </article>
+        ))}
+      </div>
+      <div className="pro-booking-toolbar">
+        <label>
+          <Search size={16} />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && refresh()}
+            placeholder="নাম, ফোন বা Ticket ID"
+          />
+        </label>
+        <select value={status} onChange={(e) => setStatus(e.target.value)}>
+          <option value="">সব Status</option>
+          {statuses.map((x) => (
+            <option key={x}>{x}</option>
+          ))}
+        </select>
+        <button className="pro-button pro-button-blue" onClick={refresh}>
+          <Filter size={15} /> Filter
+        </button>
+      </div>
+      {loading ? (
+        <p>Bookings লোড হচ্ছে…</p>
+      ) : !bookings.length ? (
+        <div className="pro-empty-state">
+          <ClipboardList size={34} />
+          <b>কোনো booking পাওয়া যায়নি</b>
+          <p>নতুন service request এলে এখানে দেখা যাবে।</p>
+        </div>
+      ) : (
+        <div className="pro-bookings-table-wrap">
+          <table className="pro-bookings-table">
+            <thead>
+              <tr>
+                <th>Ticket / Date</th>
+                <th>Customer</th>
+                <th>Service</th>
+                <th>Area & Problem</th>
+                <th>Status</th>
+                <th>Technician / Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {bookings.map((b) => (
+                <tr key={b._id}>
+                  <td>
+                    <b>{b.ticketId || b._id}</b>
+                    <small>
+                      {b.createdAt
+                        ? new Date(b.createdAt).toLocaleString("en-BD")
+                        : "—"}
+                    </small>
+                  </td>
+                  <td>
+                    <b>{b.name || "—"}</b>
+                    <small>{b.phone || "—"}</small>
+                    {b.email && <small>{b.email}</small>}
+                  </td>
+                  <td>{b.serviceName || "—"}</td>
+                  <td>
+                    <b>{b.area || "—"}</b>
+                    <small>{b.address || ""}</small>
+                    <small>{b.problem || ""}</small>
+                    {b.preferredDate && (
+                      <small>
+                        Preferred: {b.preferredDate} · {b.preferredTime}
+                      </small>
+                    )}
+                  </td>
+                  <td>
+                    <select
+                      value={b.status || "New"}
+                      onChange={(e) => updateStatus(b._id, e.target.value)}
+                    >
+                      {statuses.map((x) => (
+                        <option key={x}>{x}</option>
+                      ))}
+                    </select>
+                  </td>
+                  <td>
+                    <select
+                      multiple
+                      aria-label={`Assign technicians for ${b.ticketId}`}
+                      value={
+                        selections[b._id] ??
+                        b.technicianIds ??
+                        (b.technicianId ? [b.technicianId] : [])
+                      }
+                      onChange={(e) =>
+                        setSelections((prev) => ({
+                          ...prev,
+                          [b._id]: Array.from(
+                            e.target.selectedOptions,
+                            (o) => o.value,
+                          ),
+                        }))
+                      }
+                    >
+                      {technicians.map((t) => (
+                        <option key={t._id} value={t._id}>
+                          {t.name} ({t.email})
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      className="pro-button pro-button-blue"
+                      onClick={() => assign(b)}
+                    >
+                      Assign technician(s)
+                    </button>
+                    <button
+                      className="pro-button pro-button-danger"
+                      onClick={() => remove(b)}
+                    >
+                      <Trash2 size={14} /> Delete
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
 export function PublicCMSPage() {
   const [page, setPage] = useState(null),
     [error, setError] = useState("");

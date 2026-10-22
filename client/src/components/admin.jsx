@@ -43,6 +43,10 @@ import {
   Pencil,
   Camera,
   UserRound,
+  Wallet,
+  TrendingDown,
+  Scale,
+  Package,
 } from "lucide-react";
 import CMSPage, { PublicCMSPage } from "../pages-CMS.jsx";
 
@@ -274,17 +278,11 @@ export function AdminPage() {
             <p>নতুন বুকিং, status ও customer details পরিচালনা করুন।</p>
           </div>
           <div className="admin-heading-actions">
-            <Link className="btn btn-outline" to="/admin/business-control">
-              <Building2 size={16} /> Business Control
-            </Link>
             <Link className="btn btn-primary" to="/admin/cms">
               CMS / Page Builder
             </Link>
-            <Link className="btn btn-outline" to="/admin/content">
-              Service Editor
-            </Link>
-            <Link className="btn btn-outline" to="/admin/management">
-              Management Center
+            <Link className="btn btn-outline" to="/operations">
+              Service Operations
             </Link>
           </div>
         </div>
@@ -486,7 +484,7 @@ export function AdminPage() {
   );
 }
 
-export function ContentManagerPage() {
+export function ContentManagerPage({ embedded = false } = {}) {
   const [token, setToken] = useState(
     () => sessionStorage.getItem("muAdminToken") || "",
   );
@@ -609,7 +607,7 @@ export function ContentManagerPage() {
   return (
     <main className="content-editor-page">
       <div className="container">
-        <div className="dashboard-title">
+        {!embedded && <div className="dashboard-title">
           <div>
             <span className="section-kicker">CONTENT MANAGEMENT</span>
             <h1>Website Editor</h1>
@@ -621,7 +619,7 @@ export function ContentManagerPage() {
           <Link className="btn btn-outline" to="/admin">
             ← Dashboard
           </Link>
-        </div>
+        </div>}
         {!token ? (
           <form className="account-card editor-login" onSubmit={login}>
             <h2>Admin Login</h2>
@@ -649,21 +647,13 @@ export function ContentManagerPage() {
           </form>
         ) : (
           <div className="editor-card">
-            <div className="editor-help">
+            {!embedded && <div className="editor-help">
               <b>Graphical Content Editor</b>
               <p>
                 ছবি যোগ করতে image URL দিন। ছবি আপনার নিজস্ব hosting-এ রাখুন
                 অথবা image URL ব্যবহার করুন।
               </p>
-            </div>
-            <div className="admin-business-control-link">
-          <div>
-            <span className="section-kicker">PHASE 3 · BUSINESS CONTROL</span>
-            <strong>Finance, Performance &amp; Reports</strong>
-            <p>Advanced reports, technician performance, customer feedback এবং audit log একসাথে দেখুন।</p>
-          </div>
-          <Link to="/admin/business-control" className="btn btn-primary">Open Business Control →</Link>
-        </div>
+            </div>}
         <div className="editor-tabs">
               <button
                 className={`btn ${tab === "services" ? "btn-primary" : "btn-outline"}`}
@@ -821,7 +811,7 @@ export function TicketTrackingPage() {
 }
 
 export function AdminOperationsPage() {
-  const [tab, setTab] = useState("overview"),
+  const [tab, setTab] = useState(() => new URLSearchParams(window.location.search).get("tab") || "overview"),
     [data, setData] = useState({
       technicians: [],
       staff: [],
@@ -1056,7 +1046,6 @@ export function AdminOperationsPage() {
             ["finance", "আয়-ব্যয়"],
             ["payments", "Booking Payments"],
             ["inventory", "Inventory"],
-            ["service-operations", "Service Operations"],
           ].map(([v, l]) => (
             <button
               key={v}
@@ -1072,22 +1061,30 @@ export function AdminOperationsPage() {
         </div>
         {tab === "overview" && (
           <>
-            <div className="stats-grid">
-              <div className="stat-card">
+            <div className="stats-grid management-summary-grid">
+              <div className="stat-card management-summary-card summary-income">
+                <div className="management-summary-icon"><Wallet size={22} /></div>
                 <span>মোট আয়</span>
                 <b>৳{Number(data.income || 0).toLocaleString("en-BD")}</b>
+                <small>মোট রেকর্ডকৃত আয়</small>
               </div>
-              <div className="stat-card">
+              <div className="stat-card management-summary-card summary-expense">
+                <div className="management-summary-icon"><TrendingDown size={22} /></div>
                 <span>মোট ব্যয়</span>
                 <b>৳{Number(data.expense || 0).toLocaleString("en-BD")}</b>
+                <small>মোট রেকর্ডকৃত ব্যয়</small>
               </div>
-              <div className="stat-card">
+              <div className="stat-card management-summary-card summary-balance">
+                <div className="management-summary-icon"><Scale size={22} /></div>
                 <span>নিট ব্যালেন্স</span>
                 <b>৳{Number(data.profit || 0).toLocaleString("en-BD")}</b>
+                <small>আয় থেকে ব্যয় বাদ দিয়ে</small>
               </div>
-              <div className="stat-card">
+              <div className="stat-card management-summary-card summary-inventory">
+                <div className="management-summary-icon"><Package size={22} /></div>
                 <span>Inventory Items</span>
                 <b>{data.items.length}</b>
+                <small>মোট ইনভেন্টরি আইটেম</small>
               </div>
             </div>
             <div className="admin-table-card">
@@ -1213,7 +1210,7 @@ export function AdminOperationsPage() {
           </div>
         )}
         {tab === "service-operations" && (
-          <div className="admin-table-card"><div className="table-toolbar"><div><h2>Service Operations</h2><p>Service Reports, Parts Requests ও Notification পরিচালনা করুন।</p></div><Link to="/operations" className="btn btn-primary">Open Service Operations →</Link></div></div>
+          <div className="admin-table-card"><div className="table-toolbar"><div><h2>Service Operations</h2><p>Service Reports, Parts Requests ও Notification পরিচালনা করুন।</p></div></div></div>
         )}
         {tab === "finance" && (
           <>

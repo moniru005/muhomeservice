@@ -102,17 +102,6 @@ export function AccountPage({ mode }) {
   return (
     <main className="account-page">
       <form className="account-card" onSubmit={submit}>
-        <Link to="/" className="brand">
-          <span className="brand-mark">
-            <Home size={22} />
-          </span>
-          <span>
-            <strong>
-              MU <b>HOME SERVICE</b>
-            </strong>
-            <small>YOUR SERVICE ACCOUNT</small>
-          </span>
-        </Link>
         <h1>
           {mode === "technician"
             ? "Technician Registration"
