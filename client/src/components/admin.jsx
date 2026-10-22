@@ -60,6 +60,7 @@ export function AdminPage() {
   const [admin, setAdmin] = useState(() =>
     JSON.parse(sessionStorage.getItem("muAdmin") || "null"),
   );
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [login, setLogin] = useState({ email: "", password: "" });
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -242,10 +243,26 @@ export function AdminPage() {
             </span>
           </Link>
           <div className="admin-user">
-            <span>Welcome, {admin?.name || "Admin"}</span>
-            <button className="btn btn-outline btn-small" onClick={logout}>
-              <LogOut size={15} /> Logout
-            </button>
+            <span className="admin-welcome">Welcome, {admin?.name || "Admin"}</span>
+            <div className="admin-profile-menu-wrap">
+              <button
+                type="button"
+                className="admin-avatar-trigger"
+                aria-label="Open profile menu"
+                aria-expanded={profileMenuOpen}
+                onClick={() => setProfileMenuOpen(open => !open)}
+              >
+                <span className="admin-avatar"><UserRound size={20} /></span>
+                <ChevronDown size={15} />
+              </button>
+              {profileMenuOpen && (
+                <div className="admin-profile-dropdown">
+                  <Link to="/admin" onClick={() => setProfileMenuOpen(false)}><Home size={16} /> Dashboard</Link>
+                  <Link to="/profile?account=admin" onClick={() => setProfileMenuOpen(false)}><UserRound size={16} /> আমার প্রোফাইল</Link>
+                  <button type="button" onClick={() => { setProfileMenuOpen(false); logout(); }}><LogOut size={16} /> Logout</button>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -257,8 +274,8 @@ export function AdminPage() {
             <p>নতুন বুকিং, status ও customer details পরিচালনা করুন।</p>
           </div>
           <div className="admin-heading-actions">
-            <Link className="btn btn-outline" to="/profile?account=admin">
-              আমার প্রোফাইল
+            <Link className="btn btn-outline" to="/admin/business-control">
+              <Building2 size={16} /> Business Control
             </Link>
             <Link className="btn btn-primary" to="/admin/cms">
               CMS / Page Builder
@@ -1040,7 +1057,6 @@ export function AdminOperationsPage() {
             ["payments", "Booking Payments"],
             ["inventory", "Inventory"],
             ["service-operations", "Service Operations"],
-            ["business-control", "Business Control"],
           ].map(([v, l]) => (
             <button
               key={v}
@@ -1198,9 +1214,6 @@ export function AdminOperationsPage() {
         )}
         {tab === "service-operations" && (
           <div className="admin-table-card"><div className="table-toolbar"><div><h2>Service Operations</h2><p>Service Reports, Parts Requests ও Notification পরিচালনা করুন।</p></div><Link to="/operations" className="btn btn-primary">Open Service Operations →</Link></div></div>
-        )}
-        {tab === "business-control" && (
-          <div className="admin-table-card"><div className="table-toolbar"><div><h2>Business Control</h2><p>Quotation, Inventory ও Finance workflow পরিচালনা করুন।</p></div><Link to="/admin/business-control" className="btn btn-primary">Open Business Control →</Link></div></div>
         )}
         {tab === "finance" && (
           <>

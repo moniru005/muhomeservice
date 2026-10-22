@@ -41,18 +41,60 @@ export default function OperationsWorkspace({ mode = 'auto' }) {
   async function loadAll() {
     setError('');
     if (!getToken()) { setError('এই পেজ ব্যবহার করতে আগে লগইন করুন।'); return; }
+    const failures = [];
+    // Load each section independently so a failing dashboard/booking endpoint
+    // cannot prevent notifications from loading or refreshing.
     try {
-      const s = await request('dashboard/summary'); setSummary(s);
+      const s = await request('dashboard/summary');
+      setSummary(s);
       if (!selectedBooking && s.bookings?.length) setSelectedBooking(s.bookings[0]._id);
-      if (staffOrAdmin) {
-        const [p, r] = await Promise.all([request('operations/parts-requests'), request('operations/service-reports')]);
-        setPartsRequests(p.requests || []); setServiceReports(r.reports || []);
-      }
-      if (technician) { const inv = await request('operations/inventory/catalog'); setInventoryItems(inv.items || []); }
-      const n = await request('notifications'); setNotifications(n.notifications || []);
-    } catch (e) { setError(e.message); }
+    } catch (e) { failures.push(`Dashboard: ${e.message}`); }
+    if (staffOrAdmin) {
+      const results = await Promise.allSettled([request('operations/parts-requests'), request('operations/service-reports')]);
+      if (results[0].status === 'fulfilled') setPartsRequests(results[0].value.requests || []);
+      else failures.push(`Parts Requests: ${results[0].reason.message}`);
+      if (results[1].status === 'fulfilled') setServiceReports(results[1].value.reports || []);
+      else failures.push(`Service Reports: ${results[1].reason.message}`);
+    }
+    if (technician) {
+      try { const inv = await request('operations/inventory/catalog'); setInventoryItems(inv.items || []); }
+      catch (e) { failures.push(`Inventory: ${e.message}`); }
+    }
+    try {
+      const n = await request('notifications');
+      setNotifications(Array.isArray(n.notifications) ? n.notifications : []);
+    } catch (e) { failures.push(`Notifications: ${e.message}`); }
+    if (failures.length) setError(failures.join(' · '));
   }
-  useEffect(() => { loadAll(); }, []);
+  async function refreshAll() {
+    setNotice('');
+    await loadAll();
+    setNotice(current => current || 'তথ্য রিফ্রেশ করা হয়েছে।');
+  }
+  useEffect(() => {
+    let active = true;
+    async function refreshCurrentUser() {
+      const token = getToken();
+      if (!token) { loadAll(); return; }
+      try {
+        const profile = await request('auth/me');
+        if (!active || !profile.user) return;
+        const latestUser = profile.user;
+        setUser(latestUser);
+        const isAdmin = latestUser.role === 'admin' || Boolean(sessionStorage.getItem('muAdminToken'));
+        const canCreateQuotation = isAdmin || (latestUser.role === 'staff' && (latestUser.permissions || []).includes('manageQuotations'));
+        if (canCreateQuotation) setTab(current => current === 'jobs' ? 'quotation' : current);
+        else setTab(current => current === 'quotation' ? 'jobs' : current);
+        if (sessionStorage.getItem('muUserToken')) sessionStorage.setItem('muUser', JSON.stringify(latestUser));
+        else if (sessionStorage.getItem('muAdminToken')) sessionStorage.setItem('muAdmin', JSON.stringify(latestUser));
+      } catch (_) {
+        // Keep the existing session profile if the profile refresh endpoint is unavailable.
+      }
+    }
+    refreshCurrentUser();
+    return () => { active = false; };
+  }, []);
+  useEffect(() => { loadAll(); }, [user]);
   useEffect(() => { if (!selectedBooking && bookings.length) setSelectedBooking(bookings[0]._id); }, [bookings, selectedBooking]);
   const counts = useMemo(() => ({ active: bookings.filter(b => !['Completed', 'Cancelled'].includes(b.status)).length, completed: bookings.filter(b => b.status === 'Completed').length, unread: notifications.filter(n => !n.read).length }), [bookings, notifications]);
 
@@ -65,7 +107,9 @@ export default function OperationsWorkspace({ mode = 'auto' }) {
     } catch (e2) { setError(e2.message); } finally { setBusy(false); }
   }
   async function submitQuote(e) {
-    e.preventDefault(); if (!currentBooking) return;
+    e.preventDefault();
+    if (role !== 'admin' && !(user?.role === 'staff' && (user?.permissions || []).includes('manageQuotations'))) { setError('Quotation তৈরির অনুমতি নেই। Admin-এর কাছ থেকে Create quotations permission নিন।'); setTab('jobs'); return; }
+    if (!currentBooking) return;
     setBusy(true); setError(''); setNotice('');
     try {
       await request(`operations/bookings/${currentBooking._id}/quotations`, { method: 'POST', body: JSON.stringify({ items: [{ description: quote.description, quantity: Number(quote.quantity), unitPrice: Number(quote.unitPrice) }], discount: Number(quote.discount), notes: quote.notes }) });
@@ -96,10 +140,10 @@ export default function OperationsWorkspace({ mode = 'auto' }) {
   }
 
   return <main className="ops-workspace"><div className="ops-shell">
-    <header className="ops-heading"><div><Link to={technician ? '/technician/dashboard' : '/dashboard'} className="ops-back"><ArrowLeft size={16}/> Dashboard</Link><span className="ops-kicker">MU HOME SERVICE · OPERATIONS</span><h1>{technician ? 'Technician Workspace' : 'Service Operations'}</h1><p>{technician ? 'Service Report তৈরি করুন, Parts Request পাঠান এবং নিজের কাজ পরিচালনা করুন।' : 'Service Report, Quotation, Parts Request ও Notification একই জায়গা থেকে পরিচালনা করুন।'}</p></div><button className="ops-refresh" onClick={loadAll}><RefreshCw size={16}/> Refresh</button></header>
+    <header className="ops-heading"><div><Link to={technician ? '/technician/dashboard' : '/dashboard'} className="ops-back"><ArrowLeft size={16}/> Dashboard</Link><span className="ops-kicker">MU HOME SERVICE · OPERATIONS</span><h1>{technician ? 'Technician Workspace' : 'Service Operations'}</h1><p>{technician ? 'Service Report তৈরি করুন, Parts Request পাঠান এবং নিজের কাজ পরিচালনা করুন।' : 'Service Report, Quotation, Parts Request ও Notification একই জায়গা থেকে পরিচালনা করুন।'}</p></div><button className="ops-refresh" onClick={refreshAll}><RefreshCw size={16}/> Refresh</button></header>
     {error && <div className="ops-alert error"><AlertCircle size={18}/>{error}</div>}{notice && <div className="ops-alert success"><CheckCircle2 size={18}/>{notice}</div>}
     <section className="ops-metrics"><div><span>মোট Booking</span><strong>{summary?.total ?? '—'}</strong></div><div><span>চলমান কাজ</span><strong>{counts.active}</strong></div><div><span>সম্পন্ন কাজ</span><strong>{summary?.completed ?? counts.completed}</strong></div><div><span>Unread Notification</span><strong>{counts.unread}</strong></div></section>
-    <nav className="ops-tabs">{[...(role !== 'admin' ? [{id:'jobs',label:'কাজ ও রিপোর্ট',icon:ClipboardCheck}] : []),...((role==='admin'||role==='staff'&&(user?.permissions||[]).some(p=>['manageQuotations','manageBookings','assignTechnicians'].includes(p)))?[{id:'quotation',label:'Quotation',icon:FileText}]:[]),...(technician ? [{id:'parts',label:'Parts Request',icon:Package}] : []),...(staffOrAdmin ? [{id:'reports',label:`Service Reports${serviceReports.length ? ` (${serviceReports.length})` : ''}`,icon:ClipboardCheck},{id:'parts-admin',label:'Parts Requests',icon:Package}] : []),{id:'notifications',label:`Notifications${counts.unread ? ` (${counts.unread})` : ''}`,icon:Bell}].map(t => <button key={t.id} className={tab===t.id?'active':''} onClick={()=>setTab(t.id)}><t.icon size={17}/>{t.label}</button>)}</nav>
+    <nav className="ops-tabs">{[...(role !== 'admin' ? [{id:'jobs',label:'কাজ ও রিপোর্ট',icon:ClipboardCheck}] : []),...((role==='admin'||role==='staff'&&(user?.permissions||[]).includes('manageQuotations'))?[{id:'quotation',label:'Quotation',icon:FileText}]:[]),...(technician ? [{id:'parts',label:'Parts Request',icon:Package}] : []),...(staffOrAdmin ? [{id:'reports',label:`Service Reports${serviceReports.length ? ` (${serviceReports.length})` : ''}`,icon:ClipboardCheck},{id:'parts-admin',label:'Parts Requests',icon:Package}] : []),{id:'notifications',label:`Notifications${counts.unread ? ` (${counts.unread})` : ''}`,icon:Bell}].map(t => <button key={t.id} className={tab===t.id?'active':''} onClick={()=>setTab(t.id)}><t.icon size={17}/>{t.label}</button>)}</nav>
     <section className="ops-panel">
       <div className="ops-panel-title"><div><h2>{tab==='jobs'?'Service Report জমা দিন':tab==='quotation'?'Quotation তৈরি':tab==='parts'?'যন্ত্রাংশের অনুরোধ':tab==='reports'?'Submitted Service Reports':tab==='parts-admin'?'Parts Request Approval':'Notification Center'}</h2><p>তথ্য জমা দেওয়ার আগে Booking নির্বাচন করুন।</p></div></div>
       {['jobs','quotation','parts'].includes(tab) && <label className="ops-field">Booking নির্বাচন করুন<select value={currentBooking?._id || ''} onChange={e=>setSelectedBooking(e.target.value)}><option value="">Booking নির্বাচন করুন</option>{bookings.map(b=><option key={b._id} value={b._id}>{b.ticketId || b._id} · {b.serviceName || 'Service'} · {b.status}</option>)}</select></label>}
@@ -108,7 +152,7 @@ export default function OperationsWorkspace({ mode = 'auto' }) {
       {tab==='parts' && <form className="ops-form" onSubmit={submitParts}><div className="ops-selected"><b>{currentBooking?.ticketId || 'Booking নির্বাচন করা হয়নি'}</b><span>{currentBooking?.serviceName}</span></div><div className="ops-grid"><label className="ops-field">Inventory থেকে যন্ত্রাংশ নির্বাচন করুন *<select required value={parts.itemId} onChange={e=>{const item=inventoryItems.find(x=>x._id===e.target.value);setParts({...parts,itemId:e.target.value,name:item?.name||''});}}><option value="">যন্ত্রাংশ নির্বাচন করুন</option>{inventoryItems.map(item=><option key={item._id} value={item._id}>{item.name} · Stock {item.quantity} {item.unit||'pcs'}</option>)}</select></label><label className="ops-field">পরিমাণ *<input required type="number" min="1" step="1" max={inventoryItems.find(x=>x._id===parts.itemId)?.quantity||undefined} value={parts.quantity} onChange={e=>setParts({...parts,quantity:e.target.value})}/></label></div><label className="ops-field">কেন প্রয়োজন / Note<textarea value={parts.note} onChange={e=>setParts({...parts,note:e.target.value})}/></label><button className="ops-submit" disabled={busy||!currentBooking||!parts.itemId}><Send size={16}/>Parts Request পাঠান</button></form>}
       {tab==='reports' && <div className="ops-list">{serviceReports.length ? serviceReports.map(r=><article className="ops-list-item" key={r.reportId || r._id}><div><b>{r.ticketId || r.bookingId} · {r.createdByEmail || r.createdBy || 'Submitter unknown'}</b><p><strong>Diagnosis:</strong> {r.diagnosis || '—'}</p><p><strong>Work done:</strong> {r.workDone || '—'}</p><p><strong>Parts:</strong> {(r.partsUsed||[]).map(p=>`${p.name} × ${p.quantity}`).join(', ') || '—'}</p><small>{r.createdAt ? new Date(r.createdAt).toLocaleString('bn-BD') : ''} · {r.role || ''}</small></div></article>) : <div className="ops-empty">এখনো কোনো Service Report জমা হয়নি।</div>}</div>}
       {tab==='parts-admin' && <div className="ops-list">{partsRequests.length ? partsRequests.map(r=><article className="ops-list-item" key={r.requestId}><div><b>{r.ticketId} · {r.technicianName}</b><p>{(r.parts||[]).map(p=>`${p.name} × ${p.quantity}`).join(', ')}</p><span className={`ops-status ${r.status}`}>{r.status}</span></div>{r.status==='pending'&&<div className="ops-actions"><button onClick={()=>decideParts(r.requestId,'approved')} disabled={busy}>Approve</button><button className="danger" onClick={()=>decideParts(r.requestId,'rejected')} disabled={busy}>Reject</button></div>}{r.status==='approved'&&<div className="ops-actions"><button onClick={()=>decideParts(r.requestId,'issued')} disabled={busy}>Issue Stock & Record Expense</button></div>}</article>) : <div className="ops-empty">কোনো Parts Request পাওয়া যায়নি।</div>}</div>}
-      {tab==='notifications' && <><div className="ops-actions"><button onClick={()=>setNotificationFilter('all')}>সব</button><button onClick={()=>setNotificationFilter('unread')}>Unread ({counts.unread})</button><button onClick={()=>setNotificationFilter('read')}>Read</button><button onClick={markAllRead} disabled={!counts.unread||busy}>সব Read করুন</button><button onClick={loadAll}>Refresh</button></div><div className="ops-list">{notifications.filter(n=>notificationFilter==='all'||(notificationFilter==='unread'?!n.read:n.read)).length ? notifications.filter(n=>notificationFilter==='all'||(notificationFilter==='unread'?!n.read:n.read)).map(n=><article className={`ops-list-item ${n.read?'read':''}`} key={n._id}><div><b>{n.title || n.type || 'Notification'}</b><p>{n.message || 'নতুন আপডেট পাওয়া গেছে।'}</p><small>{n.createdAt ? new Date(n.createdAt).toLocaleString('bn-BD') : ''}</small></div>{!n.read&&<button onClick={()=>markRead(n)}>Read করুন</button>}</article>) : <div className="ops-empty">এই Filter-এ কোনো Notification নেই।</div>}</div></>}
+      {tab==='notifications' && <><div className="ops-actions"><button onClick={()=>setNotificationFilter('all')}>সব</button><button onClick={()=>setNotificationFilter('unread')}>Unread ({counts.unread})</button><button onClick={()=>setNotificationFilter('read')}>Read</button><button onClick={markAllRead} disabled={!counts.unread||busy}>সব Read করুন</button><button onClick={refreshAll}>Refresh</button></div><div className="ops-list">{notifications.filter(n=>notificationFilter==='all'||(notificationFilter==='unread'?!n.read:n.read)).length ? notifications.filter(n=>notificationFilter==='all'||(notificationFilter==='unread'?!n.read:n.read)).map(n=><article className={`ops-list-item ${n.read?'read':''}`} key={n._id}><div><b>{n.title || n.type || 'Notification'}</b><p>{n.message || 'নতুন আপডেট পাওয়া গেছে।'}</p><small>{n.createdAt ? new Date(n.createdAt).toLocaleString('bn-BD') : ''}</small></div>{!n.read&&<button onClick={()=>markRead(n)}>Read করুন</button>}</article>) : <div className="ops-empty">এই Filter-এ কোনো Notification নেই।</div>}</div></>}
     </section>
     <p className="ops-footnote">কোনো কাজ না দেখালে আপনার Role, Account Approval, Booking Assignment এবং Permission পরীক্ষা করুন।</p>
   </div></main>;

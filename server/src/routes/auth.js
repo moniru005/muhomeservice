@@ -102,7 +102,7 @@ router.get('/me', requireAuth, async (req,res,next)=>{try{
  const collection = req.user.role === 'admin' ? 'admins' : 'users';
  const u = await getDB().collection(collection).findOne({_id:new ObjectId(req.user.sub)}, {projection:{passwordHash:0,password:0,resetTokenHash:0}});
  if(!u) return res.status(401).json({message:'Account not found'});
- res.set('Cache-Control','no-store'); res.json({user:{id:u._id.toString(),name:u.name,email:u.email,phone:u.phone||'',role:req.user.role,profilePhoto:u.profilePhoto||'',createdAt:u.createdAt||null}});
+ res.set('Cache-Control','no-store'); res.json({user:{id:u._id.toString(),name:u.name,email:u.email,phone:u.phone||'',role:req.user.role,permissions:Array.isArray(u.permissions)?u.permissions:[],profilePhoto:u.profilePhoto||'',createdAt:u.createdAt||null}});
 }catch(e){next(e)}});
 
 router.put('/me', requireAuth, (req,res,next)=>profileUpload.single('profilePhoto')(req,res,async err=>{
