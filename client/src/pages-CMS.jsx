@@ -224,6 +224,7 @@ export default function CMSPage() {
     [busy, setBusy] = useState(false),
     [search, setSearch] = useState(""),
     [mobileNav, setMobileNav] = useState(false),
+    [profileMenuOpen, setProfileMenuOpen] = useState(false),
     [preview, setPreview] = useState(false),
     [showAddPage, setShowAddPage] = useState(false),
     [newPageTitle, setNewPageTitle] = useState(""),
@@ -664,21 +665,59 @@ export default function CMSPage() {
             >
               <Globe size={18} />
             </a>
-            <span className="pro-avatar">MU</span>
-            <div className="pro-user-meta">
-              <b>
-                {JSON.parse(sessionStorage.getItem("muAdmin") || "{}").name ||
-                  "Administrator"}
-              </b>
-              <small>Website administrator</small>
-            </div>
-            <button
-              className="pro-chevron-button"
-              onClick={logout}
-              title="Sign out"
+            <div
+              className={`pro-account-menu ${profileMenuOpen ? "is-open" : ""}`}
+              onMouseEnter={() => setProfileMenuOpen(true)}
+              onMouseLeave={() => setProfileMenuOpen(false)}
             >
-              <ChevronDown size={16} />
-            </button>
+              <Link
+                to="/profile?account=admin"
+                className="pro-account-link"
+                title="Open administrator profile"
+                onClick={() => setProfileMenuOpen(false)}
+              >
+                <span className="pro-avatar">MU</span>
+                <span className="pro-user-meta">
+                  <b>
+                    {JSON.parse(sessionStorage.getItem("muAdmin") || "{}")
+                      .name || "MU Home Service Admin"}
+                  </b>
+                  <small>Website administrator</small>
+                </span>
+              </Link>
+              <button
+                className="pro-chevron-button"
+                type="button"
+                aria-label="Open account menu"
+                aria-expanded={profileMenuOpen}
+                onClick={() => setProfileMenuOpen((open) => !open)}
+                title="Account options"
+              >
+                <ChevronDown size={16} />
+              </button>
+              {profileMenuOpen && (
+                <div className="pro-account-dropdown">
+                  <Link to="/admin" onClick={() => setProfileMenuOpen(false)}>
+                    <Home size={15} /> Dashboard
+                  </Link>
+                  <Link
+                    to="/profile?account=admin"
+                    onClick={() => setProfileMenuOpen(false)}
+                  >
+                    <Settings size={15} /> Update profile
+                  </Link>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setProfileMenuOpen(false);
+                      logout();
+                    }}
+                  >
+                    <LogOut size={15} /> Logout
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         </header>
         <div className="pro-content">
