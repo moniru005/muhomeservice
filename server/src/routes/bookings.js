@@ -38,6 +38,38 @@ router.post('/bookings', requireAuth, requireRole('customer'), async (req, res, 
 });
 
 
+// Customer can only view/cancel their own bookings and see their own recorded payments.
+router.get('/customer/bookings', requireAuth, requireRole('customer'), async (req, res, next) => {
+  try {
+    const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(100, Math.max(1, Number.parseInt(req.query.limit, 10) || 25));
+    const col = getDB().collection('bookings');
+    const filter = { userId: req.user.sub };
+    const [bookings, total] = await Promise.all([col.find(filter).sort({ createdAt: -1 }).skip((page-1)*limit).limit(limit).project({ name:1, ticketId:1, serviceName:1, status:1, createdAt:1, preferredDate:1, preferredTime:1, paymentAmount:1, paymentStatus:1, payments:1, quotedAmount:1, totalAmount:1 }).toArray(), col.countDocuments(filter)]);
+    res.json({ bookings, pagination: { page, limit, total, pages: Math.max(1, Math.ceil(total/limit)) } });
+  } catch (e) { next(e); }
+});
+router.patch('/customer/bookings/:id/cancel', requireAuth, requireRole('customer'), async (req, res, next) => {
+  try {
+    if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ message: 'Invalid booking ID' });
+    const col = getDB().collection('bookings');
+    const result = await col.updateOne({ _id: new ObjectId(req.params.id), userId: req.user.sub, status: { $in: ['New', 'Contacted'] } }, { $set: { status: 'Cancelled', cancelledAt: new Date(), cancelledBy: req.user.sub, updatedAt: new Date() }, $push: { statusHistory: { status: 'Cancelled', at: new Date(), by: req.user.sub, byRole: 'customer' } } });
+    if (!result.modifiedCount) {
+      const own = await col.findOne({ _id: new ObjectId(req.params.id), userId: req.user.sub }, { projection: { status:1 } });
+      if (!own) return res.status(404).json({ message: 'Booking not found' });
+      return res.status(409).json({ message: 'এই Booking আর Customer নিজে বাতিল করতে পারবেন না। Staff/Admin-এর সঙ্গে যোগাযোগ করুন।' });
+    }
+    res.json({ message: 'Booking cancelled successfully', status: 'Cancelled' });
+  } catch (e) { next(e); }
+});
+router.get('/customer/payments', requireAuth, requireRole('customer'), async (req, res, next) => {
+  try {
+    const bookings = await getDB().collection('bookings').find({ userId: req.user.sub }).project({ ticketId:1, serviceName:1, payments:1, paymentAmount:1, paymentStatus:1, quotedAmount:1, totalAmount:1, createdAt:1 }).sort({ createdAt:-1 }).limit(500).toArray();
+    const payments = bookings.flatMap(b => (b.payments || []).map(p => ({ ...p, ticketId: b.ticketId, serviceName: b.serviceName, bookingId: b._id, paymentStatus: b.paymentStatus || 'unpaid' })));
+    res.json({ payments, bookings: bookings.map(b => ({ _id:b._id, ticketId:b.ticketId, serviceName:b.serviceName, paidAmount:Number(b.paymentAmount || (b.payments || []).reduce((n,p)=>n+Number(p.amount||0),0)), expectedAmount:Number(b.totalAmount || b.quotedAmount || 0), paymentStatus:b.paymentStatus || 'unpaid' })) });
+  } catch (e) { next(e); }
+});
+
 router.get('/tracking/:ticketId', async (req, res, next) => {
   try {
     const ticketId = String(req.params.ticketId || '').trim().slice(0, 60);
@@ -51,11 +83,14 @@ router.get('/tracking/:ticketId', async (req, res, next) => {
 router.get('/admin/bookings', requireAdmin, async (req, res, next) => {
   try {
     const { status, q } = req.query;
+    const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(100, Math.max(1, Number.parseInt(req.query.limit, 10) || 25));
     const filter = {};
     if (status && statuses.includes(status)) filter.status = status;
     if (q) filter.$or = ['name', 'phone', 'ticketId', 'serviceName'].map(k => ({ [k]: { $regex: String(q).slice(0, 80), $options: 'i' } }));
-    const bookings = await getDB().collection('bookings').find(filter).sort({ createdAt: -1 }).limit(300).toArray();
-    res.json({ bookings, statuses });
+    const col = getDB().collection('bookings');
+    const [bookings, total] = await Promise.all([col.find(filter).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit).toArray(), col.countDocuments(filter)]);
+    res.json({ bookings, statuses, pagination: { page, limit, total, pages: Math.max(1, Math.ceil(total / limit)) } });
   } catch (err) { next(err); }
 });
 
@@ -71,6 +106,22 @@ router.patch('/admin/bookings/:id/status', requireAdmin, async (req, res, next) 
 });
 
 
+
+router.patch('/bookings/:id/status', requireAuth, async (req, res, next) => {
+  try {
+    if (req.user.role !== 'admin') {
+      if (req.user.role !== 'staff' || !ObjectId.isValid(req.user.sub)) return res.status(403).json({ message: 'Booking status পরিবর্তনের অনুমতি নেই।' });
+      const staff = await getDB().collection('users').findOne({ _id: new ObjectId(req.user.sub), role:'staff', accountStatus:'approved' });
+      if (!staff || !(staff.permissions || []).includes('manageBookings')) return res.status(403).json({ message: 'Admin-এর কাছ থেকে manageBookings permission নিন।' });
+    }
+    if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ message:'Invalid booking ID' });
+    const status = String(req.body.status || '');
+    if (!statuses.includes(status)) return res.status(400).json({ message:'Invalid status' });
+    const result = await getDB().collection('bookings').updateOne({ _id:new ObjectId(req.params.id) }, { $set:{ status, updatedAt:new Date(), ...(req.body.adminNote !== undefined ? { adminNote:String(req.body.adminNote).slice(0,1000) } : {}) }, $push:{ statusHistory:{ status, at:new Date(), by:req.user.sub, byRole:req.user.role } } });
+    if (!result.matchedCount) return res.status(404).json({ message:'Booking not found' });
+    res.json({ message:'Booking status updated', status });
+  } catch(e) { next(e); }
+});
 
 router.get('/bookings/assignable-technicians', requireAuth, async (req, res, next) => {
   try {
@@ -104,6 +155,31 @@ router.patch('/bookings/:id/technicians', requireAuth, async (req, res, next) =>
   } catch (err) { next(err); }
 });
 
+
+// A technician may accept or decline only an assignment that is still awaiting a decision.
+router.patch('/technician/bookings/:id/decision', requireAuth, requireRole('technician'), async (req, res, next) => {
+  try {
+    if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ message:'Invalid booking ID' });
+    const decision = String(req.body.decision || '');
+    if (!['accepted','rejected'].includes(decision)) return res.status(400).json({ message:'Decision must be accepted or rejected' });
+    const db = getDB();
+    const technician = await db.collection('users').findOne({ _id:new ObjectId(req.user.sub), role:'technician', accountStatus:'approved', technicianStatus:'approved' });
+    if (!technician) return res.status(403).json({ message:'Approved Technician account required' });
+    const booking = await db.collection('bookings').findOne({ _id:new ObjectId(req.params.id), $or:[{technicianId:req.user.sub},{technicianIds:req.user.sub}] });
+    if (!booking) return res.status(404).json({ message:'এই Booking আপনার নামে assign করা নেই।' });
+    const decisions = booking.technicianDecisions || {};
+    if (decisions[req.user.sub]) return res.status(409).json({ message:'আপনি ইতিমধ্যে এই assignment-এর সিদ্ধান্ত দিয়েছেন।' });
+    const set = { [`technicianDecisions.${req.user.sub}`]: { decision, at:new Date() }, updatedAt:new Date() };
+    if (decision === 'rejected') {
+      const remaining = (booking.technicianIds || [booking.technicianId].filter(Boolean)).filter(id => id !== req.user.sub);
+      set.technicianIds = remaining; set.technicianId = remaining[0] || null;
+      if (!remaining.length) set.status = 'New';
+    }
+    const update = await db.collection('bookings').updateOne({ _id:booking._id, [`technicianDecisions.${req.user.sub}`]: { $exists:false } }, { $set:set, $push:{ statusHistory:{ status:decision === 'accepted' ? 'Assigned' : 'Technician rejected', at:new Date(), by:req.user.sub, byRole:'technician' } } });
+    if (!update.modifiedCount) return res.status(409).json({ message:'Booking decision already changed; refresh and try again.' });
+    res.json({ message: decision === 'accepted' ? 'কাজটি গ্রহণ করেছেন।' : 'কাজটি প্রত্যাখ্যান করা হয়েছে; Admin/Staff পুনরায় assign করতে পারবেন।', decision });
+  } catch(e) { next(e); }
+});
 
 // Technician-only work queue and status transitions. Ownership is always checked on the server.
 router.patch('/technician/bookings/:id/status', requireAuth, requireRole('technician'), async (req, res, next) => {

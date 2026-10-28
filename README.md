@@ -139,3 +139,23 @@ See [`HOSTING-DEPLOY-GUIDE-BN.md`](./HOSTING-DEPLOY-GUIDE-BN.md) for Vercel + Re
 ## Phase 3 — Business Control
 
 Business Control dashboard: `/admin/business-control`. Details, endpoints, feedback API and verification caveats are documented in `PHASE-3-BUSINESS-CONTROL-BN.md`.
+
+## Role workflow completion update
+
+This package adds role-scoped customer booking/payment APIs, customer cancellation for eligible early-stage bookings, feedback form support in the customer dashboard, technician assignment decisions, work-photo uploads, technician commission summaries, permission-gated staff booking status changes, staff finance/inventory API access, and server-side booking pagination.
+
+### Staff permissions
+
+Admins can grant Staff these explicit capabilities from Staff Management: `manageBookings`, `assignTechnicians`, `manageQuotations`, `managePayments`, and `manageInventory`. Sensitive API endpoints validate the permission server-side; hiding a menu is not treated as authorization. Staff without booking-related permissions do not receive the global booking queue through the dashboard summary.
+
+### External integrations still require credentials
+
+The repository does not include an online payment gateway merchant account or an SMS provider account. Online payment collection and outbound SMS must not be enabled by pretending a payment was successful. Configure a selected gateway (for example, SSLCOMMERZ) and SMS provider credentials, implement/verify their signed callbacks, and test in sandbox before enabling those flows in production. The existing recorded-payment ledger is for payments actually received by an authorized Admin or Staff member.
+
+### Deployment checks
+
+- Install dependencies in both `server` and `client`, then run the client production build.
+- Configure `MONGODB_URI`, `JWT_SECRET`, `CLIENT_ORIGIN`, and `VITE_API_URL` for the target environment.
+- Ensure `server/uploads/service-reports` is persistent and served under `/api/uploads/service-reports/`.
+- Set Staff permissions in the Admin UI and test each role with separate accounts. In particular verify that one customer cannot access another customer's bookings/payments, and an unassigned technician cannot access another technician's work.
+- Test online payment/SMS only after the provider adapter and credentials are supplied; these cannot be verified from this ZIP alone.

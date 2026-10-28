@@ -79,6 +79,8 @@ export function AdminPage() {
   });
   const [statusFilter, setStatusFilter] = useState("");
   const [query, setQuery] = useState("");
+  const [bookingPage, setBookingPage] = useState(1);
+  const [bookingPagination, setBookingPagination] = useState({ page:1, pages:1, total:0, limit:25 });
   const [notice, setNotice] = useState("");
   async function api(path, opts = {}) {
     const res = await fetch(`${API}${path}`, {
@@ -119,11 +121,12 @@ export function AdminPage() {
   async function refresh() {
     try {
       const [b, s, tech] = await Promise.all([
-        api(`/admin/bookings?status=${encodeURIComponent(statusFilter)}&q=${encodeURIComponent(query)}`),
+        api(`/admin/bookings?status=${encodeURIComponent(statusFilter)}&q=${encodeURIComponent(query)}&page=${bookingPage}&limit=25`),
         api("/admin/stats"),
         api("/admin/technicians"),
       ]);
       setBookings(b.bookings);
+      setBookingPagination(b.pagination || {page:1,pages:1,total:b.bookings?.length||0,limit:25});
       setStats(s);
       setAssignableTechnicians((tech.technicians || []).filter(t => (t.technicianStatus || t.accountStatus) === "approved"));
       setError("");
@@ -138,7 +141,7 @@ export function AdminPage() {
   }
   useEffect(() => {
     if (token) refresh();
-  }, [token, statusFilter]);
+  }, [token, statusFilter, bookingPage]);
   function logout() {
     sessionStorage.removeItem("muAdminToken");
     sessionStorage.removeItem("muAdmin");
@@ -377,7 +380,7 @@ export function AdminPage() {
                   <option key={s}>{s}</option>
                 ))}
               </select>
-              <button className="btn btn-primary btn-small" onClick={refresh}>
+              <button className="btn btn-primary btn-small" onClick={() => { setBookingPage(1); refresh(); }}>
                 <Filter size={15} /> Filter
               </button>
             </div>
@@ -474,6 +477,7 @@ export function AdminPage() {
               </table>
             </div>
           )}
+          <div className="table-toolbar" style={{marginTop:16}}><small>মোট {bookingPagination.total} টি Booking · Page {bookingPagination.page} / {bookingPagination.pages}</small><div style={{display:"flex",gap:8}}><button className="btn btn-outline btn-small" disabled={bookingPage<=1} onClick={()=>setBookingPage(p=>Math.max(1,p-1))}>Previous</button><button className="btn btn-primary btn-small" disabled={bookingPage>=bookingPagination.pages} onClick={()=>setBookingPage(p=>Math.min(bookingPagination.pages,p+1))}>Next</button></div></div>
         </div>
         <p className="admin-security-note">
           <ShieldCheck size={15} /> Admin API is protected by JWT. Log out when
@@ -1200,7 +1204,7 @@ export function AdminOperationsPage() {
                           <option value="suspended">Suspended</option>
                         </select>
                       </td>
-                      <td><div style={{display:"grid",gap:6,minWidth:190}}>{[["assignTechnicians","Assign technician(s)"],["manageQuotations","Create quotations"],["manageBookings","Manage bookings"],["manageInventory","Manage inventory"]].map(([permission,label])=><label key={permission} style={{display:"flex",gap:8,alignItems:"center"}}><input type="checkbox" checked={(member.permissions||[]).includes(permission)} disabled={status!=="approved"} onChange={async e=>{try{await request(`/admin/staff/${member._id}/permissions`,{method:"PATCH",body:JSON.stringify({permission,enabled:e.target.checked})});setNotice(`${label} permission আপডেট হয়েছে।`);await load();}catch(err){setError(err.message)}}}/>{label}</label>)}</div></td>
+                      <td><div style={{display:"grid",gap:6,minWidth:190}}>{[["assignTechnicians","Assign technician(s)"],["manageQuotations","Create quotations"],["manageBookings","Manage bookings"],["managePayments","Manage payments & finance"],["manageInventory","Manage inventory"]].map(([permission,label])=><label key={permission} style={{display:"flex",gap:8,alignItems:"center"}}><input type="checkbox" checked={(member.permissions||[]).includes(permission)} disabled={status!=="approved"} onChange={async e=>{try{await request(`/admin/staff/${member._id}/permissions`,{method:"PATCH",body:JSON.stringify({permission,enabled:e.target.checked})});setNotice(`${label} permission আপডেট হয়েছে।`);await load();}catch(err){setError(err.message)}}}/>{label}</label>)}</div></td>
                     </tr>;
                   })}
                   {data.staff.length === 0 && <tr><td colSpan="6">কোনো Staff account পাওয়া যায়নি।</td></tr>}

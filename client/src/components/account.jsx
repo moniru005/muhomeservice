@@ -42,6 +42,7 @@ import {
   Trash2,
   Camera,
   UserRound,
+  Wallet,
 } from "lucide-react";
 import CMSPage, { PublicCMSPage } from "../pages-CMS.jsx";
 
@@ -347,6 +348,10 @@ export function UserDashboard({ mode = "auto" }) {
   const [selectedTechnicians, setSelectedTechnicians] = useState({});
   const [assigning, setAssigning] = useState("");
   const [notice, setNotice] = useState("");
+  const [paymentsData, setPaymentsData] = useState({ payments: [], bookings: [] });
+  const [earningsData, setEarningsData] = useState(null);
+  const [feedbackForms, setFeedbackForms] = useState({});
+  const [photoBusy, setPhotoBusy] = useState("");
   const isTechnicianView = mode === "technician" || user?.role === "technician";
   const isStaffView = user?.role === "staff";
   const nextTechnicianStatus = { Assigned: "On the way", "On the way": "Inspection", Inspection: "In progress", "In progress": "Completed" };
@@ -373,6 +378,18 @@ export function UserDashboard({ mode = "auto" }) {
         const d = await r.json();
         if (!r.ok) throw new Error(d.message);
         setData(d);
+        if (d.role === "customer") {
+          const [pr, fr] = await Promise.all([
+            fetch(`${API}/customer/payments`, { headers: { Authorization: `Bearer ${token}` } }),
+            fetch(`${API}/customer/bookings`, { headers: { Authorization: `Bearer ${token}` } }),
+          ]);
+          if (pr.ok) setPaymentsData(await pr.json());
+          if (fr.ok) { const fd = await fr.json(); setData(old => old ? { ...old, bookings: fd.bookings } : old); }
+        }
+        if (d.role === "technician") {
+          const er = await fetch(`${API}/technician/earnings`, { headers: { Authorization: `Bearer ${token}` } });
+          if (er.ok) setEarningsData(await er.json());
+        }
         if (d.canAssign) {
           const tr = await fetch(`${API}/bookings/assignable-technicians`, { headers: { Authorization: `Bearer ${token}` } });
           const td = await tr.json();
@@ -393,6 +410,37 @@ export function UserDashboard({ mode = "auto" }) {
       const refreshed = await fetch(`${API}/dashboard/summary`, { headers: { Authorization: `Bearer ${token}` } });
       const summary = await refreshed.json(); if (refreshed.ok) setData(summary);
     } catch (e) { setError(e.message); } finally { setAssigning(""); }
+  }
+  async function customerCancel(booking) {
+    if (!window.confirm(`${booking.ticketId} বুকিংটি বাতিল করবেন?`)) return;
+    const token = sessionStorage.getItem("muUserToken");
+    try {
+      const r = await fetch(`${API}/customer/bookings/${booking._id}/cancel`, { method:"PATCH", headers:{Authorization:`Bearer ${token}`} });
+      const d = await r.json(); if (!r.ok) throw new Error(d.message || "Cancel করা যায়নি");
+      setNotice(d.message); const rr = await fetch(`${API}/dashboard/summary`, {headers:{Authorization:`Bearer ${token}`}}); if(rr.ok) setData(await rr.json());
+    } catch(e) { setError(e.message); }
+  }
+  async function submitFeedback(bookingId) {
+    const form = feedbackForms[bookingId] || { rating:5, comment:"" };
+    try {
+      const token = sessionStorage.getItem("muUserToken");
+      const r = await fetch(`${API}/feedback`, {method:"POST",headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},body:JSON.stringify({bookingId,rating:Number(form.rating),comment:form.comment})});
+      const d = await r.json(); if(!r.ok) throw new Error(d.message || "Feedback জমা হয়নি");
+      setNotice("ধন্যবাদ! আপনার Feedback জমা হয়েছে।");
+      setFeedbackForms(old=>({...old,[bookingId]:{...form,submitted:true}}));
+    } catch(e) { setError(e.message); }
+  }
+  async function decideAssignment(bookingId, decision) {
+    const token = sessionStorage.getItem("muUserToken"); setAssigning(bookingId); setError("");
+    try { const r = await fetch(`${API}/technician/bookings/${bookingId}/decision`, {method:"PATCH",headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},body:JSON.stringify({decision})}); const d=await r.json(); if(!r.ok) throw new Error(d.message || "Decision failed"); setNotice(d.message); const rr=await fetch(`${API}/dashboard/summary`,{headers:{Authorization:`Bearer ${token}`}}); if(rr.ok)setData(await rr.json()); }
+    catch(e){setError(e.message)} finally{setAssigning("")}
+  }
+  async function uploadWorkPhotos(bookingId, files) {
+    if (!files?.length) return;
+    const token = sessionStorage.getItem("muUserToken"); const body = new FormData();
+    Array.from(files).slice(0,5).forEach(f=>body.append("photos",f)); setPhotoBusy(bookingId); setError("");
+    try { const r=await fetch(`${API}/technician/bookings/${bookingId}/photos`,{method:"POST",headers:{Authorization:`Bearer ${token}`},body}); const d=await r.json(); if(!r.ok) throw new Error(d.message || "ছবি আপলোড হয়নি"); setNotice("কাজের ছবি আপলোড হয়েছে।"); }
+    catch(e){setError(e.message)} finally{setPhotoBusy("")}
   }
   function logout() {
     sessionStorage.removeItem("muUserToken");
@@ -446,6 +494,8 @@ export function UserDashboard({ mode = "auto" }) {
                 <ShieldCheck />
               </div>
             </div>
+            {isTechnicianView && earningsData && <div className="dashboard-stats" style={{marginTop:16}}><div className="stat-card"><span>সম্পন্ন কাজ</span><b>{earningsData.completedJobs}</b><ClipboardList /></div><div className="stat-card"><span>কমিশন হার</span><b>{earningsData.commissionRate}%</b><Wallet /></div><div className="stat-card"><span>মোট কমিশন</span><b>৳{Number(earningsData.totalEarnings||0).toLocaleString()}</b><Wallet /></div></div>}
+            {user?.role === "customer" && <div className="admin-table-card" style={{marginBottom:18}}><div className="table-toolbar"><div><h2>আমার পেমেন্ট</h2><p>আপনার বুকিংয়ের রেকর্ড করা পেমেন্ট ও বকেয়া দেখুন।</p></div></div><div className="table-scroll"><table className="bookings-table"><thead><tr><th>টিকিট</th><th>সার্ভিস</th><th>পরিশোধ</th><th>মোট বিল</th><th>স্ট্যাটাস</th></tr></thead><tbody>{(paymentsData.bookings||[]).map(p=><tr key={String(p._id)}><td>{p.ticketId}</td><td>{p.serviceName}</td><td>৳{Number(p.paidAmount||0).toLocaleString()}</td><td>৳{Number(p.expectedAmount||0).toLocaleString()}</td><td>{p.paymentStatus}</td></tr>)}{!paymentsData.bookings?.length&&<tr><td colSpan="5">এখনো কোনো পেমেন্ট রেকর্ড নেই। অনলাইন পেমেন্ট সক্রিয় না থাকলে Admin-এর সঙ্গে যোগাযোগ করুন।</td></tr>}</tbody></table></div></div>}
             <div className="admin-table-card">
               <div className="table-toolbar">
                 <div>
@@ -465,6 +515,7 @@ export function UserDashboard({ mode = "auto" }) {
                         <th>স্ট্যাটাস</th>
                         {data.canAssign && <th>Technician Assign</th>}
                         {isTechnicianView && <th>কাজের পরবর্তী ধাপ</th>}
+                        {(isTechnicianView || isStaffView || user?.role === "customer") && <th>Actions</th>}
                       </tr>
                     </thead>
                     <tbody>
@@ -486,7 +537,13 @@ export function UserDashboard({ mode = "auto" }) {
                             <button className="btn btn-primary assign-technicians-button" disabled={assigning === b._id} onClick={() => saveTechnicianAssignment(b._id)}>{assigning === b._id ? "Saving..." : "Assign"}</button>
                             </div>
                           </td>}
-                          {isTechnicianView && <td><div style={{display:"grid",gap:6,minWidth:130}}><span>{b.status}</span>{nextTechnicianStatus[b.status] && <button className="btn btn-primary btn-small" disabled={assigning === b._id} onClick={() => updateJobStatus(b._id, nextTechnicianStatus[b.status])}>{assigning === b._id ? "Saving…" : nextTechnicianStatus[b.status]}</button>}</div></td>}
+                          {isTechnicianView && <td><div style={{display:"grid",gap:6,minWidth:130}}><span>{b.status}</span>{!b.technicianDecisions?.[user?._id]?.decision && <><button className="btn btn-primary btn-small" disabled={assigning === b._id} onClick={() => decideAssignment(b._id,"accepted")}>কাজ গ্রহণ</button><button className="btn btn-outline btn-small" disabled={assigning === b._id} onClick={() => decideAssignment(b._id,"rejected")}>প্রত্যাখ্যান</button></>}{nextTechnicianStatus[b.status] && <button className="btn btn-primary btn-small" disabled={assigning === b._id} onClick={() => updateJobStatus(b._id, nextTechnicianStatus[b.status])}>{assigning === b._id ? "Saving…" : nextTechnicianStatus[b.status]}</button>}</div></td>}
+                          {(isTechnicianView || isStaffView || user?.role === "customer") && <td><div style={{display:"grid",gap:8,minWidth:160}}>
+                            {isTechnicianView && <label className="btn btn-outline btn-small" style={{cursor:"pointer"}}>কাজের ছবি আপলোড<input type="file" accept="image/jpeg,image/png,image/webp" multiple hidden onChange={e=>uploadWorkPhotos(b._id,e.target.files)} disabled={photoBusy===b._id}/></label>}
+                            {isStaffView && <div style={{display:"flex",gap:6}}><select aria-label="Booking status" defaultValue={b.status} onChange={e=>setSelectedTechnicians(old=>({...old,[`status-${b._id}`]:e.target.value}))}><option>New</option><option>Contacted</option><option>Assigned</option><option>On the way</option><option>Inspection</option><option>Quotation sent</option><option>Approved</option><option>In progress</option><option>Completed</option><option>Cancelled</option></select><button className="btn btn-primary btn-small" onClick={async()=>{try{const t=sessionStorage.getItem("muUserToken");const r=await fetch(`${API}/bookings/${b._id}/status`,{method:"PATCH",headers:{"Content-Type":"application/json",Authorization:`Bearer ${t}`},body:JSON.stringify({status:selectedTechnicians[`status-${b._id}`]||b.status})});const d=await r.json();if(!r.ok)throw new Error(d.message);setNotice("Booking status আপডেট হয়েছে।");const rr=await fetch(`${API}/dashboard/summary`,{headers:{Authorization:`Bearer ${t}`}});if(rr.ok)setData(await rr.json())}catch(e){setError(e.message)}}}>Save</button></div>}
+                            {user?.role === "customer" && ["New","Contacted"].includes(b.status) && <button className="btn btn-outline btn-small" onClick={()=>customerCancel(b)}>বুকিং বাতিল</button>}
+                            {user?.role === "customer" && b.status === "Completed" && !feedbackForms[b._id]?.submitted && <><label>রেটিং <select value={feedbackForms[b._id]?.rating || 5} onChange={e=>setFeedbackForms(old=>({...old,[b._id]:{...(old[b._id]||{}),rating:e.target.value}}))}>{[5,4,3,2,1].map(n=><option key={n} value={n}>{n} ★</option>)}</select></label><textarea placeholder="আপনার মতামত লিখুন" value={feedbackForms[b._id]?.comment || ""} onChange={e=>setFeedbackForms(old=>({...old,[b._id]:{...(old[b._id]||{}),comment:e.target.value}}))}/><button className="btn btn-primary btn-small" onClick={()=>submitFeedback(b._id)}>Feedback জমা দিন</button></>}
+                          </div></td>}
                         </tr>
                       ))}
                     </tbody>
