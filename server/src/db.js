@@ -12,6 +12,8 @@ export async function connectDB() {
   database = client.db(process.env.MONGODB_DB || 'mu_home_service');
   await Promise.all([
     database.collection('bookings').createIndex({ createdAt: -1 }),
+    database.collection('bookings').createIndex({ userId: 1, createdAt: -1 }),
+    database.collection('quotations').createIndex({ bookingId: 1, createdAt: -1 }),
     database.collection('bookings').createIndex({ phone: 1 }),
     database.collection('admins').createIndex({ email: 1 }, { unique: true }),
     database.collection('users').createIndex({ email: 1 }, { unique: true }),
@@ -20,7 +22,20 @@ export async function connectDB() {
     database.collection('financeEntries').createIndex({ sourceKey: 1 }, { unique: true, sparse: true }),
     database.collection('financeEntries').createIndex({ date: -1, createdAt: -1 }),
     database.collection('inventoryMovements').createIndex({ itemId: 1, createdAt: -1 }),
-    database.collection('inventoryMovements').createIndex({ bookingId: 1, createdAt: -1 })
+    database.collection('inventoryMovements').createIndex({ bookingId: 1, createdAt: -1 }),
+    database.collection('onlinePayments').createIndex({ paymentId: 1 }, { unique: true }),
+    database.collection('onlinePayments').createIndex({ providerTransactionId: 1 }, { unique: true, sparse: true }),
+    database.collection('onlinePayments').createIndex({ bookingId: 1, userId: 1, status: 1, expiresAt: 1 }),
+    database.collection('onlinePayments').createIndex({ createdAt: -1 }),
+    database.collection('bookings').createIndex({ deletedAt: 1, createdAt: -1 }),
+    database.collection('serviceClaims').createIndex({ userId: 1, createdAt: -1 }),
+    database.collection('serviceClaims').createIndex({ bookingId: 1, status: 1 }),
+    database.collection('technicianAttendance').createIndex({ technicianId: 1, date: 1 }, { unique: true }),
+    database.collection('technicianLeaveRequests').createIndex({ technicianId: 1, createdAt: -1 }),
+    database.collection('quotationTemplates').createIndex({ serviceId: 1, active: 1 }),
+    database.collection('refunds').createIndex({ refundId: 1 }, { unique: true }),
+    database.collection('refunds').createIndex({ paymentId: 1, status: 1 }),
+    database.collection('serviceReports').createIndex({ bookingId: 1, createdAt: -1 })
   ]);
   // Seed editable catalog only when a document does not exist. Existing admin edits are never overwritten.
   const content = database.collection('siteContent');

@@ -11,7 +11,11 @@ import contactRoutes from "./routes/contact.js";
 import cmsRoutes from "./routes/cms.js";
 import roleRoutes from "./routes/roles.js";
 import operationsRoutes from "./routes/operations.js";
+import paymentRoutes from "./routes/payments.js";
+import roleEnhancementRoutes from "./routes/role-enhancements.js";
+import { notifySmsSafely } from "./services/integrations.js";
 import { requireAdmin, requireAuth } from "./middleware/auth.js";
+import { getRolePermissions } from "./middleware/permissions.js";
 import { getDB } from "./db.js";
 import path from "node:path";
 import fs from "node:fs";
@@ -27,7 +31,10 @@ function requireAdminOrStaffPermission(permission) {
       const { ObjectId } = await import("mongodb");
       if (!ObjectId.isValid(req.user.sub)) return res.status(403).json({ message: "Staff account required" });
       const staff = await getDB().collection("users").findOne({ _id: new ObjectId(req.user.sub), role: "staff", accountStatus: "approved" });
-      if (!staff || !(staff.permissions || []).includes(permission)) return res.status(403).json({ message: `Admin-এর কাছ থেকে ${permission} permission নিন।` });
+      const rolePerms = await getRolePermissions("staff");
+      const resourceAction = { managePayments: ["payments", "create"], manageInventory: ["inventory", "update"], manageBookings: ["bookings", "update"], assignTechnicians: ["bookings", "assign"], manageQuotations: ["quotations", "create"], viewReports: ["reports", "read"] }[permission] || ["dashboard", "read"];
+      const actions = rolePerms[resourceAction[0]] || [];
+      if (!staff || !actions.some(a => ["*", resourceAction[1], ...(resourceAction[1] === "create" ? ["update"] : [])].includes(a))) return res.status(403).json({ message: `Role & Permission Manager অনুযায়ী ${resourceAction[0]}:${resourceAction[1]} অনুমতি নেই।` });
       next();
     } catch (e) { next(e); }
   });
@@ -43,7 +50,7 @@ app.use(
     allowedHeaders: ["Content-Type", "Authorization"],
   }),
 );
-app.use(express.json({ limit: "100kb" }));
+app.use(express.json({ limit: "100kb", verify: (req, _res, buffer) => { req.rawBody = Buffer.from(buffer); } }));
 app.use(
   rateLimit({
     windowMs: 15 * 60 * 1000,
@@ -215,10 +222,10 @@ app.get("/api/dashboard/summary", async (req, res, next) => {
             return res
               .status(403)
               .json({ message: "Staff অ্যাকাউন্ট অনুমোদিত নয়।" });
-          canAssign = (staff.permissions || []).includes("assignTechnicians");
-          // Only staff granted booking/assignment/quotation permissions may query the booking queue.
-          const p = staff.permissions || [];
-          filter = p.some((x) => ["manageBookings", "assignTechnicians", "manageQuotations"].includes(x)) ? {} : { _id: { $exists: false } };
+          const rolePerms = await getRolePermissions("staff");
+          canAssign = (rolePerms.bookings || []).some(a => ["*", "assign"].includes(a));
+          const canReadQueue = (rolePerms.bookings || []).some(a => ["*", "read", "update", "assign", "status"].includes(a)) || (rolePerms.quotations || []).some(a => ["*", "read", "create"].includes(a));
+          filter = canReadQueue ? {} : { _id: { $exists: false } };
         } else filter = { userId: req.user.sub };
         const [total, completed, bookings] = await Promise.all([
           db.collection("bookings").countDocuments(filter),
@@ -682,6 +689,7 @@ app.post(
         paymentMethod: method,
       };
       await db.collection("financeEntries").insertOne(entry);
+      await notifySmsSafely({ to: booking.phone, message: `MU Home Service: ${booking.ticketId} বুকিংয়ে ৳${amount.toFixed(2)} পেমেন্ট রেকর্ড হয়েছে।`, context: "manual-payment" });
       res.status(201).json({
         message: "Payment recorded and income ledger updated",
         payment,
@@ -1199,6 +1207,8 @@ app.use("/api", roleRoutes);
 app.use("/api", bookingRoutes);
 app.use("/api", contactRoutes);
 app.use("/api", operationsRoutes);
+app.use("/api", paymentRoutes);
+app.use("/api", roleEnhancementRoutes);
 app.use((req, res) =>
   res.status(404).json({ message: `Not found: ${req.method} ${req.path}` }),
 );

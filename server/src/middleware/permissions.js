@@ -2,14 +2,15 @@ import { getDB } from '../db.js';
 
 export const DEFAULT_ROLE_PERMISSIONS = Object.freeze({
   admin: { '*': ['*'] },
-  staff: { dashboard: ['read'], bookings: ['read', 'update'], customers: ['read'], services: ['read'] },
-  technician: { dashboard: ['read'], assignedBookings: ['read', 'update'], profile: ['read', 'update'] },
-  customer: { dashboard: ['read'], ownBookings: ['read', 'create'], profile: ['read', 'update'], services: ['read'] }
+  staff: { dashboard: ['read'], bookings: ['read', 'update', 'assign', 'status'], customers: ['read'], services: ['read'], quotations: ['read', 'create', 'update'], payments: ['read', 'create'], inventory: ['read', 'create', 'update', 'delete'], reports: ['read'] },
+  technician: { dashboard: ['read'], assignedBookings: ['read', 'update'], profile: ['read', 'update'], earnings: ['read'], servicePhotos: ['create'] },
+  customer: { dashboard: ['read'], ownBookings: ['read', 'create', 'update'], ownPayments: ['read'], ownQuotations: ['read', 'update'], profile: ['read', 'update'], services: ['read'] }
 });
 
 export async function getRolePermissions(role) {
   const saved = await getDB().collection('rolePermissions').findOne({ role });
-  return saved?.permissions || DEFAULT_ROLE_PERMISSIONS[role] || {};
+  // Saved Role & Permission Manager configuration is authoritative; defaults apply only before the first save.
+  return saved ? (saved.permissions || {}) : (DEFAULT_ROLE_PERMISSIONS[role] || {});
 }
 
 export function requirePermission(resource, action) {
@@ -19,7 +20,8 @@ export function requirePermission(resource, action) {
       if (req.user.role === 'admin') return next();
       const permissions = await getRolePermissions(req.user.role);
       const actions = permissions[resource] || [];
-      if (actions.includes('*') || actions.includes(action)) return next();
+      const wildcard = permissions['*'] || [];
+      if (actions.includes('*') || actions.includes(action) || wildcard.includes('*')) return next();
       return res.status(403).json({ message: 'এই কাজের অনুমতি নেই।' });
     } catch (error) { next(error); }
   };

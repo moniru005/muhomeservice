@@ -70,6 +70,10 @@ export function AdminPage() {
   const [loading, setLoading] = useState(false);
   const [bookings, setBookings] = useState([]);
   const [assignableTechnicians, setAssignableTechnicians] = useState([]);
+  const [commissionTechnicians, setCommissionTechnicians] = useState([]);
+  const [customerDirectory, setCustomerDirectory] = useState([]);
+  const [onlinePayments, setOnlinePayments] = useState([]);
+  const [refundRequests, setRefundRequests] = useState([]);
   const [assignmentSelections, setAssignmentSelections] = useState({});
   const [stats, setStats] = useState({
     total: 0,
@@ -120,15 +124,23 @@ export function AdminPage() {
   }
   async function refresh() {
     try {
-      const [b, s, tech] = await Promise.all([
+      const [b, s, tech, commissions, customers, online, refunds] = await Promise.all([
         api(`/admin/bookings?status=${encodeURIComponent(statusFilter)}&q=${encodeURIComponent(query)}&page=${bookingPage}&limit=25`),
         api("/admin/stats"),
         api("/admin/technicians"),
+        api("/admin/technicians/commission"),
+        api("/admin/customers?limit=10"),
+        api("/admin/online-payments"),
+        api("/admin/refunds"),
       ]);
       setBookings(b.bookings);
       setBookingPagination(b.pagination || {page:1,pages:1,total:b.bookings?.length||0,limit:25});
       setStats(s);
       setAssignableTechnicians((tech.technicians || []).filter(t => (t.technicianStatus || t.accountStatus) === "approved"));
+      setCommissionTechnicians(commissions.technicians || []);
+      setCustomerDirectory(customers.customers || []);
+      setOnlinePayments(online.payments || []);
+      setRefundRequests(refunds.refunds || []);
       setError("");
     } catch (e) {
       setError(e.message);
@@ -172,7 +184,7 @@ export function AdminPage() {
   async function deleteBooking(booking) {
     if (
       !window.confirm(
-        `আপনি কি ${booking.ticketId} বুকিংটি স্থায়ীভাবে মুছে ফেলতে চান?`,
+        `আপনি কি ${booking.ticketId} বুকিংটি Archive করতে চান? Finance/Payment history অক্ষত থাকবে।`,
       )
     )
       return;
@@ -180,7 +192,7 @@ export function AdminPage() {
     setNotice("");
     try {
       await api(`/admin/bookings/${booking._id}`, { method: "DELETE" });
-      setNotice(`বুকিং ${booking.ticketId} মুছে ফেলা হয়েছে।`);
+      setNotice(`বুকিং ${booking.ticketId} Archive করা হয়েছে; Finance/Payment history অক্ষত আছে।`);
       await refresh();
     } catch (e) {
       setError(e.message);
@@ -344,11 +356,30 @@ export function AdminPage() {
             <small>{statusFilter === "Completed" ? "সব request দেখুন" : "Completed request দেখুন"} →</small>
           </button>
         </div>
+        <div className="admin-table-card" style={{marginBottom:18}}>
+          <div className="table-toolbar"><div><h2>Technician Commission Rate</h2><p>প্রতিটি Technician-এর কমিশন হার Admin এখান থেকে নিয়ন্ত্রণ করতে পারবেন।</p></div></div>
+          <div className="table-scroll"><table className="bookings-table"><thead><tr><th>Technician</th><th>Skills / Area</th><th>Commission %</th><th>Action</th></tr></thead><tbody>
+            {commissionTechnicians.map(t=><tr key={t._id}><td><b>{t.name}</b><small style={{display:'block'}}>{t.phone||t.email||''}</small></td><td>{(t.skills||[]).join(', ')||'—'} <small style={{display:'block'}}>{(t.serviceAreas||[]).join(', ')||'Area not set'}</small></td><td><input aria-label={`${t.name} commission rate`} type="number" min="0" max="100" step="0.25" defaultValue={Number(t.commissionRate||0)} id={`commission-${t._id}`} style={{width:100,padding:8,border:'1px solid #dce3ea',borderRadius:8}} /></td><td><button className="btn btn-primary btn-small" onClick={async()=>{try{const input=document.getElementById(`commission-${t._id}`);await api(`/admin/technicians/${t._id}/commission`,{method:'PATCH',body:JSON.stringify({commissionRate:Number(input.value)})});setNotice(`${t.name}-এর commission rate আপডেট হয়েছে।`);await refresh()}catch(e){setError(e.message)}}}>Save rate</button></td></tr>)}
+            {!commissionTechnicians.length&&<tr><td colSpan="4">Technician পাওয়া যায়নি।</td></tr>}
+          </tbody></table></div>
+        </div>
+        <div className="admin-table-card" style={{marginBottom:18}}>
+          <div className="table-toolbar"><div><h2>Online Payments & Refunds</h2><p>Refund request তৈরি করুন এবং Provider-side refund যাচাইয়ের পরে status আপডেট করুন।</p></div></div>
+          <div className="table-scroll"><table className="bookings-table"><thead><tr><th>Payment</th><th>Booking</th><th>Amount</th><th>Status</th><th>Refund</th></tr></thead><tbody>
+            {onlinePayments.map(p=><tr key={p.paymentId}><td><b>{p.paymentId}</b><small style={{display:'block'}}>{p.providerTransactionId||'No provider ref'}</small></td><td>{p.ticketId}</td><td>৳{Number(p.amount||0).toLocaleString('en-BD')}</td><td>{p.status}</td><td><button className="btn btn-outline btn-small" disabled={p.status!=='paid'} onClick={async()=>{const amount=window.prompt('Refund amount (BDT)',String(p.amount));if(!amount)return;const reason=window.prompt('Refund reason');if(!reason)return;try{await api('/admin/refunds',{method:'POST',body:JSON.stringify({paymentId:p.paymentId,amount:Number(amount),reason})});setNotice('Refund request রেকর্ড হয়েছে; provider refund এখনো আলাদাভাবে process করতে হবে।');await refresh()}catch(e){setError(e.message)}}}>Request refund</button></td></tr>)}
+            {!onlinePayments.length&&<tr><td colSpan="5">Online payment record পাওয়া যায়নি।</td></tr>}
+          </tbody></table></div>
+          <div className="table-scroll" style={{marginTop:16}}><table className="bookings-table"><thead><tr><th>Refund ID</th><th>Ticket</th><th>Amount</th><th>Reason</th><th>Status / Review</th></tr></thead><tbody>{refundRequests.map(r=><tr key={r.refundId}><td>{r.refundId}</td><td>{r.ticketId||r.bookingId}</td><td>৳{Number(r.amount||0).toLocaleString('en-BD')}</td><td>{r.reason}</td><td><div style={{display:'flex',gap:6,alignItems:'center',flexWrap:'wrap'}}><span>{r.status}</span>{['requested','approved','reconciliation_required'].includes(r.status)&&<><button className="btn btn-outline btn-small" onClick={async()=>{try{await api(`/admin/refunds/${r.refundId}`,{method:'PATCH',body:JSON.stringify({status:'approved'})});setNotice('Refund approved; provider-side refund execute করে reference সংরক্ষণ করুন।');await refresh()}catch(e){setError(e.message)}}}>Approve</button><button className="btn btn-outline btn-small" onClick={async()=>{try{await api(`/admin/refunds/${r.refundId}`,{method:'PATCH',body:JSON.stringify({status:'rejected',reviewNote:'Rejected by admin'})});await refresh()}catch(e){setError(e.message)}}}>Reject</button><button className="btn btn-primary btn-small" onClick={async()=>{if(!window.confirm('Provider-এর refund API কল করে refund process করবেন?'))return;try{const result=await api(`/admin/refunds/${r.refundId}/process`,{method:'POST',body:JSON.stringify({})});setNotice(`Refund provider থেকে নিশ্চিত হয়েছে: ${result.providerRefundReference||''}`);await refresh()}catch(e){setError(e.message)}}}>Process provider refund</button></>}</div></td></tr>)}{!refundRequests.length&&<tr><td colSpan="5">কোনো Refund request নেই।</td></tr>}</tbody></table></div>
+        </div>
+        <div className="admin-table-card" style={{marginBottom:18}}>
+          <div className="table-toolbar"><div><h2>Recent Customers</h2><p>Customer Directory API থেকে সাম্প্রতিক Customer তালিকা।</p></div><span>{customerDirectory.length} shown</span></div>
+          <div className="table-scroll"><table className="bookings-table"><thead><tr><th>Name</th><th>Phone</th><th>Email</th><th>Account</th></tr></thead><tbody>{customerDirectory.map(c=><tr key={c._id}><td>{c.name}</td><td>{c.phone||'—'}</td><td>{c.email||'—'}</td><td>{c.accountStatus||'active'}</td></tr>)}{!customerDirectory.length&&<tr><td colSpan="4">কোনো Customer নেই।</td></tr>}</tbody></table></div>
+        </div>
         <div className="admin-table-card">
           <div className="table-toolbar">
             <div>
               <h2>All requests</h2>
-              <p>সর্বশেষ ৩০০টি request</p>
+              <p>Pagination-সহ সব request পরিচালনা করুন।</p>
             </div>
             <div className="table-filters">
               <label className="search-box">
@@ -845,6 +876,8 @@ export function AdminOperationsPage() {
   });
   const [editingItemId, setEditingItemId] = useState("");
   const [opsBookings, setOpsBookings] = useState([]);
+  const [onlinePayments, setOnlinePayments] = useState({ payments: [], counts: {} });
+  const [integrationConfig, setIntegrationConfig] = useState({ onlinePaymentAvailable: false, smsNotificationsEnabled: false, paymentProvider: "bkash", currency: "BDT", smsProvider: "mimsms" });
   const [serviceReports, setServiceReports] = useState([]);
   const [partsRequests, setPartsRequests] = useState([]);
   const [payment, setPayment] = useState({ bookingId: "", amount: "", method: "cash", reference: "" });
@@ -867,13 +900,13 @@ export function AdminOperationsPage() {
   async function load() {
     setError("");
     try {
-      const [f, i, t, st, summary, bookingResult, reportResult, partsResult] = await Promise.all([
+      const [f, i, t, st, summary, bookingResult, reportResult, partsResult, onlinePaymentResult, integrationResult] = await Promise.all([
         request("/admin/finance"), request("/admin/inventory"), request("/admin/technicians"), request("/admin/staff"),
         request("/admin/operations/summary"), request("/admin/operations/bookings"),
-        request("/operations/service-reports"), request("/operations/parts-requests"),
+        request("/operations/service-reports"), request("/operations/parts-requests"), request("/admin/online-payments"), request("/admin/integrations/status"),
       ]);
       setData({ ...f, ...i, ...t, ...st, ...summary });
-      setOpsBookings(bookingResult.bookings || []); setServiceReports(reportResult.reports || []); setPartsRequests(partsResult.requests || []);
+      setOpsBookings(bookingResult.bookings || []); setOnlinePayments(onlinePaymentResult || { payments: [], counts: {} }); setIntegrationConfig(integrationResult || { onlinePaymentAvailable: false, smsNotificationsEnabled: false, paymentProvider: "bkash", currency: "BDT", smsProvider: "mimsms" }); setServiceReports(reportResult.reports || []); setPartsRequests(partsResult.requests || []);
     } catch (e) {
       setError(e.message);
     }
@@ -1324,6 +1357,8 @@ export function AdminOperationsPage() {
               {!opsBookings.length && <p>এখন কোনো সক্রিয় Booking পাওয়া যায়নি।</p>}
             </form>
             <div className="admin-table-card"><h2>Booking Payment Status</h2><div className="table-scroll"><table className="bookings-table"><thead><tr><th>Ticket</th><th>Service</th><th>Status</th><th>Paid</th><th>Payment Status</th></tr></thead><tbody>{opsBookings.map(b => <tr key={b._id}><td>{b.ticketId || b._id}</td><td>{b.serviceName || "—"}</td><td>{b.status || "—"}</td><td>৳{Number(b.paidAmount || 0).toLocaleString("en-BD")}</td><td>{b.paymentStatus || (b.paidAmount ? "partial" : "unpaid")}</td></tr>)}</tbody></table></div></div>
+            <div className="admin-table-card"><h2>Integration Configuration Status</h2><div className="dashboard-stats"><div className="stat-card"><span>Online Payment</span><b>{integrationConfig.onlinePaymentAvailable ? "Configured" : "Not configured"}</b></div><div className="stat-card"><span>Provider</span><b>{integrationConfig.paymentProvider}</b></div><div className="stat-card"><span>Currency</span><b>{integrationConfig.currency}</b></div><div className="stat-card"><span>SMS Provider</span><b>{integrationConfig.smsProvider || "generic"}</b></div><div className="stat-card"><span>SMS</span><b>{integrationConfig.smsNotificationsEnabled ? "Configured" : "Not configured"}</b></div></div><p>Provider credentials server-এর environment variables-এ রাখতে হবে; এই UI-তে secret দেখানো বা সংরক্ষণ করা হয় না।</p></div>
+            <div className="admin-table-card"><h2>Online Payment Gateway Activity</h2><p>সর্বশেষ ১০০টি online payment। `reconciliation_required` থাকলে Provider transaction যাচাই করে reconciliation করুন; এই তালিকা থেকে সরাসরি Payment সফল করা যায় না।</p><div className="dashboard-stats" style={{marginBottom:14}}>{Object.entries(onlinePayments.counts || {}).map(([status,count])=><div className="stat-card" key={status}><span>{status}</span><b>{count}</b></div>)}</div><div className="table-scroll"><table className="bookings-table"><thead><tr><th>Payment ID</th><th>Ticket</th><th>Amount</th><th>Status</th><th>Provider Ref</th><th>Created</th><th>Note</th></tr></thead><tbody>{(onlinePayments.payments || []).map(p=><tr key={p.paymentId}><td>{p.paymentId}</td><td>{p.ticketId || p.bookingId}</td><td>{p.currency} {Number(p.amount || 0).toLocaleString("en-BD")}</td><td>{p.status}</td><td>{p.providerTransactionId || "—"}</td><td>{p.createdAt ? new Date(p.createdAt).toLocaleString("bn-BD") : "—"}</td><td>{p.reconciliationReason || "—"}</td></tr>)}{!onlinePayments.payments?.length && <tr><td colSpan="7">এখনো online payment record নেই।</td></tr>}</tbody></table></div></div>
           </>
         )}
         {tab === "inventory" && (
@@ -1461,6 +1496,14 @@ export function RolePermissionsPage() {
     "bookings",
     "assignedBookings",
     "ownBookings",
+    "ownPayments",
+    "ownQuotations",
+    "earnings",
+    "servicePhotos",
+    "quotations",
+    "payments",
+    "inventory",
+    "reports",
     "customers",
     "services",
     "pages",
@@ -1478,6 +1521,7 @@ export function RolePermissionsPage() {
     "assign",
     "status",
     "publish",
+    "*",
   ];
   async function load() {
     try {

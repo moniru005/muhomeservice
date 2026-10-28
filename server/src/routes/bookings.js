@@ -4,6 +4,8 @@ import { getDB } from '../db.js';
 import { services, packages } from '../data.js';
 import { ObjectId } from 'mongodb';
 import { requireAdmin, requireAuth, requireRole } from '../middleware/auth.js';
+import { requirePermission, getRolePermissions } from '../middleware/permissions.js';
+import { notifySmsSafely, notifyWhatsAppSafely } from '../services/integrations.js';
 
 const router = Router();
 const statuses = ['New', 'Contacted', 'Assigned', 'On the way', 'Inspection', 'Quotation sent', 'Approved', 'In progress', 'Completed', 'Cancelled'];
@@ -33,6 +35,7 @@ router.post('/bookings', requireAuth, requireRole('customer'), async (req, res, 
       adminNote: '', createdAt: new Date(), updatedAt: new Date()
     };
     await getDB().collection('bookings').insertOne(booking);
+    await Promise.all([notifySmsSafely({ to: phone, message: `MU Home Service: আপনার বুকিং ${booking.ticketId} গ্রহণ করা হয়েছে। Status: New.`, context: 'booking-created' }), notifyWhatsAppSafely({ to: phone, message: `MU Home Service: আপনার বুকিং ${booking.ticketId} গ্রহণ করা হয়েছে। Status: New.`, context: 'booking-created' })]);
     res.status(201).json({ message: 'আপনার বুকিং গ্রহণ করা হয়েছে। আমরা ফোন করে নিশ্চিত করব।', ticketId: booking.ticketId });
   } catch (err) { next(err); }
 });
@@ -44,7 +47,7 @@ router.get('/customer/bookings', requireAuth, requireRole('customer'), async (re
     const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
     const limit = Math.min(100, Math.max(1, Number.parseInt(req.query.limit, 10) || 25));
     const col = getDB().collection('bookings');
-    const filter = { userId: req.user.sub };
+    const filter = { userId: req.user.sub, deletedAt: { $exists: false } };
     const [bookings, total] = await Promise.all([col.find(filter).sort({ createdAt: -1 }).skip((page-1)*limit).limit(limit).project({ name:1, ticketId:1, serviceName:1, status:1, createdAt:1, preferredDate:1, preferredTime:1, paymentAmount:1, paymentStatus:1, payments:1, quotedAmount:1, totalAmount:1 }).toArray(), col.countDocuments(filter)]);
     res.json({ bookings, pagination: { page, limit, total, pages: Math.max(1, Math.ceil(total/limit)) } });
   } catch (e) { next(e); }
@@ -85,7 +88,7 @@ router.get('/admin/bookings', requireAdmin, async (req, res, next) => {
     const { status, q } = req.query;
     const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
     const limit = Math.min(100, Math.max(1, Number.parseInt(req.query.limit, 10) || 25));
-    const filter = {};
+    const filter = req.query.includeDeleted === 'true' ? {} : { deletedAt: { $exists: false } };
     if (status && statuses.includes(status)) filter.status = status;
     if (q) filter.$or = ['name', 'phone', 'ticketId', 'serviceName'].map(k => ({ [k]: { $regex: String(q).slice(0, 80), $options: 'i' } }));
     const col = getDB().collection('bookings');
@@ -101,6 +104,8 @@ router.patch('/admin/bookings/:id/status', requireAdmin, async (req, res, next) 
     if (!statuses.includes(status)) return res.status(400).json({ message: 'Invalid status' });
     const result = await getDB().collection('bookings').updateOne({ _id: new ObjectId(req.params.id) }, { $set: { status, adminNote: String(req.body.adminNote || '').slice(0, 1000), updatedAt: new Date() } });
     if (!result.matchedCount) return res.status(404).json({ message: 'Booking not found' });
+    const updatedBooking = await getDB().collection('bookings').findOne({ _id: new ObjectId(req.params.id) }, { projection: { phone:1, ticketId:1, status:1 } });
+    if (updatedBooking) await Promise.all([notifySmsSafely({ to: updatedBooking.phone, message: `MU Home Service: বুকিং ${updatedBooking.ticketId}-এর নতুন Status: ${status}.`, context: 'booking-status' }), notifyWhatsAppSafely({ to: updatedBooking.phone, message: `MU Home Service: বুকিং ${updatedBooking.ticketId}-এর নতুন Status: ${status}.`, context: 'booking-status' })]);
     res.json({ message: 'Booking updated' });
   } catch (err) { next(err); }
 });
@@ -109,16 +114,21 @@ router.patch('/admin/bookings/:id/status', requireAdmin, async (req, res, next) 
 
 router.patch('/bookings/:id/status', requireAuth, async (req, res, next) => {
   try {
-    if (req.user.role !== 'admin') {
-      if (req.user.role !== 'staff' || !ObjectId.isValid(req.user.sub)) return res.status(403).json({ message: 'Booking status পরিবর্তনের অনুমতি নেই।' });
+    if (req.user.role === 'staff') {
+      if (!ObjectId.isValid(req.user.sub)) return res.status(403).json({ message: 'Booking status পরিবর্তনের অনুমতি নেই।' });
       const staff = await getDB().collection('users').findOne({ _id: new ObjectId(req.user.sub), role:'staff', accountStatus:'approved' });
-      if (!staff || !(staff.permissions || []).includes('manageBookings')) return res.status(403).json({ message: 'Admin-এর কাছ থেকে manageBookings permission নিন।' });
-    }
+      if (!staff) return res.status(403).json({ message: 'Approved staff account required' });
+      const { getRolePermissions } = await import('../middleware/permissions.js');
+      const perms = await getRolePermissions('staff');
+      if (!(perms.bookings || []).some(a => ['*','update','status'].includes(a))) return res.status(403).json({ message: 'Role Permission Manager অনুযায়ী Booking status পরিবর্তনের অনুমতি নেই।' });
+    } else if (req.user.role !== 'admin') return res.status(403).json({ message: 'Booking status পরিবর্তনের অনুমতি নেই।' });
     if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ message:'Invalid booking ID' });
     const status = String(req.body.status || '');
     if (!statuses.includes(status)) return res.status(400).json({ message:'Invalid status' });
     const result = await getDB().collection('bookings').updateOne({ _id:new ObjectId(req.params.id) }, { $set:{ status, updatedAt:new Date(), ...(req.body.adminNote !== undefined ? { adminNote:String(req.body.adminNote).slice(0,1000) } : {}) }, $push:{ statusHistory:{ status, at:new Date(), by:req.user.sub, byRole:req.user.role } } });
     if (!result.matchedCount) return res.status(404).json({ message:'Booking not found' });
+    const updatedBooking = await getDB().collection('bookings').findOne({ _id:new ObjectId(req.params.id) }, { projection:{ phone:1, ticketId:1 } });
+    if (updatedBooking) await Promise.all([notifySmsSafely({ to: updatedBooking.phone, message: `MU Home Service: বুকিং ${updatedBooking.ticketId}-এর নতুন Status: ${status}.`, context: 'booking-status' }), notifyWhatsAppSafely({ to: updatedBooking.phone, message: `MU Home Service: বুকিং ${updatedBooking.ticketId}-এর নতুন Status: ${status}.`, context: 'booking-status' })]);
     res.json({ message:'Booking status updated', status });
   } catch(e) { next(e); }
 });
@@ -127,7 +137,8 @@ router.get('/bookings/assignable-technicians', requireAuth, async (req, res, nex
   try {
     if (req.user.role !== 'admin') {
       const staff = await getDB().collection('users').findOne({ _id: new ObjectId(req.user.sub), role: 'staff', accountStatus: 'approved' });
-      if (!staff || !(staff.permissions || []).includes('assignTechnicians')) return res.status(403).json({ message: 'টেকনিশিয়ান assign করার অনুমতি নেই।' });
+      const rp = await getRolePermissions('staff');
+      if (!staff || !(rp.bookings || []).some(a => ['*','assign'].includes(a))) return res.status(403).json({ message: 'Role Permission Manager অনুযায়ী Technician assign করার অনুমতি নেই।' });
     }
     const technicians = await getDB().collection('users').find({ role: 'technician', technicianStatus: 'approved', accountStatus: 'approved' }, { projection: { name: 1, phone: 1, email: 1 } }).sort({ name: 1 }).toArray();
     res.json({ technicians });
@@ -141,7 +152,8 @@ router.patch('/bookings/:id/technicians', requireAuth, async (req, res, next) =>
     const db = getDB();
     if (req.user.role !== 'admin') {
       const staff = await db.collection('users').findOne({ _id: new ObjectId(req.user.sub), role: 'staff', accountStatus: 'approved' });
-      if (!staff || !(staff.permissions || []).includes('assignTechnicians')) return res.status(403).json({ message: 'টেকনিশিয়ান assign করার অনুমতি নেই।' });
+      const rp = await getRolePermissions('staff');
+      if (!staff || !(rp.bookings || []).some(a => ['*','assign'].includes(a))) return res.status(403).json({ message: 'Role Permission Manager অনুযায়ী Technician assign করার অনুমতি নেই।' });
     }
     if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ message: 'Invalid booking ID' });
     const ids = [...new Set((Array.isArray(req.body.technicianIds) ? req.body.technicianIds : []).map(String))];
@@ -150,8 +162,12 @@ router.patch('/bookings/:id/technicians', requireAuth, async (req, res, next) =>
     if (technicians.length !== ids.length) return res.status(400).json({ message: 'শুধু অনুমোদিত Technician assign করা যাবে।' });
     const booking = await db.collection('bookings').findOne({ _id: new ObjectId(req.params.id) });
     if (!booking) return res.status(404).json({ message: 'Booking not found' });
-    const result = await db.collection('bookings').updateOne({ _id: booking._id }, { $set: { technicianIds: ids, technicianId: ids[0] || null, status: ids.length ? 'Assigned' : booking.status, updatedAt: new Date() } });
-    res.json({ message: 'Technician assignment updated', technicianIds: ids });
+    if (['Completed', 'Cancelled'].includes(booking.status) && ids.length) return res.status(409).json({ message: `এই ${booking.status} booking-এ technician assign করা যাবে না।` });
+    // Assignment must not reopen or regress a booking already in progress. Only intake states advance to Assigned.
+    const nextStatus = ids.length && ['New', 'Contacted'].includes(booking.status) ? 'Assigned' : booking.status;
+    const result = await db.collection('bookings').updateOne({ _id: booking._id, status: booking.status }, { $set: { technicianIds: ids, technicianId: ids[0] || null, status: nextStatus, updatedAt: new Date() }, $push: { statusHistory: { status: nextStatus, at: new Date(), by: req.user.sub, byRole: req.user.role, note: 'Technician assignment updated' } } });
+    if (!result.modifiedCount) return res.status(409).json({ message: 'Booking changed during assignment; refresh and retry.' });
+    res.json({ message: 'Technician assignment updated', technicianIds: ids, status: nextStatus });
   } catch (err) { next(err); }
 });
 
@@ -189,13 +205,14 @@ router.patch('/technician/bookings/:id/status', requireAuth, requireRole('techni
     const technician = await db.collection('users').findOne({ _id: new ObjectId(req.user.sub), role: 'technician', accountStatus: 'approved', technicianStatus: 'approved' });
     if (!technician) return res.status(403).json({ message: 'অনুমোদিত Technician অ্যাকাউন্ট প্রয়োজন।' });
     const nextStatus = String(req.body.status || '');
-    const transitions = { 'Assigned': 'On the way', 'On the way': 'Inspection', 'Inspection': 'In progress', 'In progress': 'Completed' };
+    const transitions = { 'Assigned': 'On the way', 'On the way': 'Inspection', 'Inspection': 'In progress' }; // Completion requires customer OTP endpoint.
     const booking = await db.collection('bookings').findOne({ _id: new ObjectId(req.params.id), $or: [{ technicianId: req.user.sub }, { technicianIds: req.user.sub }] });
     if (!booking) return res.status(404).json({ message: 'এই Booking আপনার নামে assign করা নেই।' });
     if (transitions[booking.status] !== nextStatus) return res.status(409).json({ message: `এই ধাপে ${booking.status} থেকে ${transitions[booking.status] || 'পরবর্তী কোনো Status'} করা যাবে।` });
     const now = new Date();
     const result = await db.collection('bookings').updateOne({ _id: booking._id, status: booking.status, $or: [{ technicianId: req.user.sub }, { technicianIds: req.user.sub }] }, { $set: { status: nextStatus, updatedAt: now, [`statusTimestamps.${nextStatus.replace(/[^a-zA-Z0-9]/g, '_')}`]: now }, $push: { statusHistory: { status: nextStatus, at: now, by: req.user.sub, byRole: 'technician' } } });
     if (!result.modifiedCount) return res.status(409).json({ message: 'Booking Status পরিবর্তিত হয়েছে। Refresh করে আবার চেষ্টা করুন।' });
+    await notifySmsSafely({ to: booking.phone, message: `MU Home Service: বুকিং ${booking.ticketId}-এর নতুন Status: ${nextStatus}.`, context: 'technician-status' });
     res.json({ message: 'কাজের Status আপডেট হয়েছে।', status: nextStatus });
   } catch (err) { next(err); }
 });
@@ -203,9 +220,19 @@ router.patch('/technician/bookings/:id/status', requireAuth, requireRole('techni
 router.delete('/admin/bookings/:id', requireAdmin, async (req, res, next) => {
   try {
     if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ message: 'Invalid booking ID' });
-    const result = await getDB().collection('bookings').deleteOne({ _id: new ObjectId(req.params.id) });
-    if (!result.deletedCount) return res.status(404).json({ message: 'Booking not found' });
-    res.json({ message: 'Booking deleted successfully' });
+    const db = getDB();
+    const id = new ObjectId(req.params.id);
+    const booking = await db.collection('bookings').findOne({ _id: id, deletedAt: { $exists: false } });
+    if (!booking) return res.status(404).json({ message: 'Booking not found' });
+    const [paymentCount, financeCount, refundCount] = await Promise.all([
+      db.collection('onlinePayments').countDocuments({ bookingId: id.toString() }),
+      db.collection('financeEntries').countDocuments({ bookingId: id.toString() }),
+      db.collection('refunds').countDocuments({ bookingId: id.toString() })
+    ]);
+    // Never hard-delete bookings with financial relationships. Keep the original ID so invoices,
+    // refunds, payment reconciliation and audit trails remain connected.
+    await db.collection('bookings').updateOne({ _id: id, deletedAt: { $exists: false } }, { $set: { deletedAt: new Date(), deletedBy: req.user.sub, deletionReason: String(req.body?.reason || 'Admin archived booking').slice(0, 500), financialRelationshipsPreserved: true, updatedAt: new Date() } });
+    res.json({ message: 'Booking archived; financial records and references were preserved.', archived: true, financialReferences: { onlinePayments: paymentCount, financeEntries: financeCount, refunds: refundCount } });
   } catch (err) { next(err); }
 });
 

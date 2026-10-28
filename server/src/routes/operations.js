@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { ObjectId } from "mongodb";
 import { getDB } from "../db.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
+import { requirePermission, getRolePermissions } from "../middleware/permissions.js";
 const router = Router();
 const db = () => getDB();
 const oid = (id) => (ObjectId.isValid(id) ? new ObjectId(id) : null);
@@ -26,7 +27,9 @@ async function canSeeBooking(req, booking) {
     );
   if (req.user.role === "staff") {
     const u = await approvedUser(req);
-    return Boolean(u && (u.permissions || []).some((p) => ["manageBookings", "assignTechnicians", "manageQuotations", "viewReports"].includes(p)));
+    if (!u) return false;
+    const perms = await getRolePermissions("staff");
+    return Boolean((perms.bookings || []).some(a => ["*","read","update","assign","status"].includes(a)) || (perms.quotations || []).some(a => ["*","read","create","update"].includes(a)) || (perms.reports || []).some(a => ["*","read"].includes(a)));
   }
   return booking.userId === req.user.sub;
 }
@@ -132,16 +135,8 @@ router.get(
     try {
       if (req.user.role === "staff") {
         const u = await approvedUser(req);
-        if (
-          !u ||
-          !(u.permissions || []).some((p) =>
-            [
-              "manageBookings",
-              "assignTechnicians",
-              "manageQuotations",
-            ].includes(p),
-          )
-        )
+        const rp = await getRolePermissions("staff");
+        if (!u || !((rp.reports || []).some(a => ["*","read"].includes(a)) || (rp.bookings || []).some(a => ["*","read","update","assign"].includes(a))))
           return res
             .status(403)
             .json({ message: "Service report access denied" });
@@ -196,9 +191,10 @@ router.post(
         return res
           .status(403)
           .json({ message: "Approved staff account required" });
+      const rolePerms = req.user.role === "staff" ? await getRolePermissions("staff") : {};
       if (
         req.user.role === "staff" &&
-        !(user.permissions || []).includes("manageQuotations")
+        !(rolePerms.quotations || []).some(a => ["*", "create"].includes(a))
       )
         return res
           .status(403)
@@ -380,29 +376,16 @@ router.get(
   requireRole("customer"),
   async (req, res, next) => {
     try {
-      const rows = await db()
-        .collection("quotations")
-        .find({})
-        .sort({ createdAt: -1 })
-        .limit(500)
-        .toArray();
-      const owned = [];
-      for (const q of rows) {
-        const b = await db()
-          .collection("bookings")
-          .findOne({ _id: oid(q.bookingId), userId: req.user.sub });
-        if (b)
-          owned.push({
-            ...q,
-            booking: {
-              _id: b._id,
-              ticketId: b.ticketId,
-              serviceName: b.serviceName,
-              status: b.status,
-              createdAt: b.createdAt,
-            },
-          });
-      }
+      // Fetch only this customer's booking IDs, then query their quotations in one indexed query.
+      const customerBookings = await db().collection("bookings")
+        .find({ userId: req.user.sub }).project({ ticketId:1, serviceName:1, status:1, createdAt:1 }).toArray();
+      const byId = new Map(customerBookings.map(b => [b._id.toString(), b]));
+      const bookingIds = [...byId.keys()];
+      if (!bookingIds.length) return res.json({ quotations: [] });
+      const quotations = await db().collection("quotations")
+        .find({ bookingId: { $in: bookingIds } }).sort({ createdAt:-1 }).limit(500).toArray();
+      const owned = quotations.map(q => { const b = byId.get(String(q.bookingId)); return { ...q, booking: { _id:b._id, ticketId:b.ticketId, serviceName:b.serviceName, status:b.status, createdAt:b.createdAt } }; });
+      res.set('Cache-Control','no-store');
       res.json({ quotations: owned });
     } catch (e) {
       next(e);
@@ -547,15 +530,8 @@ router.get(
   async (req, res, next) => {
     try {
       const user = await approvedUser(req);
-      if (
-        req.user.role === "staff" &&
-        (!user ||
-          !(user.permissions || []).some((p) =>
-            ["manageInventory", "manageBookings", "assignTechnicians"].includes(
-              p,
-            ),
-          ))
-      )
+      const rolePerms = req.user.role === "staff" ? await getRolePermissions("staff") : {};
+      if (req.user.role === "staff" && (!user || !((rolePerms.inventory || []).some(a => ["*","read","update","create"].includes(a)) || (rolePerms.bookings || []).some(a => ["*","read","update","assign"].includes(a)))))
         return res.status(403).json({ message: "Parts request access denied" });
       const filter = {};
       if (
@@ -584,15 +560,8 @@ router.patch(
   async (req, res, next) => {
     try {
       const user = await approvedUser(req);
-      if (
-        req.user.role === "staff" &&
-        (!user ||
-          !(user.permissions || []).some((p) =>
-            ["manageInventory", "manageBookings", "assignTechnicians"].includes(
-              p,
-            ),
-          ))
-      )
+      const rolePerms = req.user.role === "staff" ? await getRolePermissions("staff") : {};
+      if (req.user.role === "staff" && (!user || !((rolePerms.inventory || []).some(a => ["*","read","update","create"].includes(a)) || (rolePerms.bookings || []).some(a => ["*","read","update","assign"].includes(a)))))
         return res
           .status(403)
           .json({ message: "Parts request approval denied" });

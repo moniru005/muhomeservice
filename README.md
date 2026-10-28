@@ -159,3 +159,29 @@ The repository does not include an online payment gateway merchant account or an
 - Ensure `server/uploads/service-reports` is persistent and served under `/api/uploads/service-reports/`.
 - Set Staff permissions in the Admin UI and test each role with separate accounts. In particular verify that one customer cannot access another customer's bookings/payments, and an unassigned technician cannot access another technician's work.
 - Test online payment/SMS only after the provider adapter and credentials are supplied; these cannot be verified from this ZIP alone.
+
+### Role permissions, assignment workflow, quotation query performance
+
+The Role & Permission Manager configuration is authoritative for staff access to bookings, quotations, reports, payments, and inventory. After changing role permissions, sign in again or refresh the session to load `rolePermissions`. Technician assignment will not reopen Completed/Cancelled bookings or regress an active booking to `Assigned`. Customer quotations are queried using the customer's booking IDs in a batched database query and supporting indexes.
+
+SMS and online gateway payment processing require provider credentials and a configured public callback URL. The current package does not claim live SMS or online gateway processing without those details and a verified end-to-end merchant test; manual payment recording is still supported.
+
+## Online payment and SMS adapter
+
+See [`PAYMENT-SMS-INTEGRATION.md`](./PAYMENT-SMS-INTEGRATION.md) for the provider-neutral checkout/webhook and SMS API contracts, environment variables, signature verification, idempotency protections, and production checklist. The integration remains disabled until server-side provider credentials and endpoints are configured. A generic adapter is not a substitute for implementing the selected provider's exact authentication and webhook-signature protocol.
+
+## bKash and Bangladesh SMS gateway
+
+The current integration package includes a bKash Tokenized Checkout adapter (sandbox by default) and a MiMSMS transactional SMS adapter. See `PAYMENT-SMS-INTEGRATION.md` and `server/.env.example` for server-only credentials and callback setup. Online payments remain unavailable until approved merchant credentials and a public HTTPS callback URL are configured. Do not switch bKash to production until sandbox cases and settlement reconciliation have been tested.
+
+## Role workflow additions
+- Customer booking attachments: `POST /api/customer/bookings/:id/photos` (`photos`, up to 5 JPG/PNG/WebP/PDF files, 5 MB each).
+- Invoice and receipt data: `GET /api/customer/bookings/:id/invoice` and `/receipt` (authenticated; customer ownership enforced).
+- Warranty claims and complaints: `POST /api/customer/bookings/:id/warranty-claims` and `/complaints`. Warranty starts when a job is completed using the OTP flow; default duration is `DEFAULT_WARRANTY_DAYS` (30 days).
+- Completion confirmation: Technician requests an OTP at `POST /api/technician/bookings/:id/completion-otp`; then verifies at `PATCH /api/technician/bookings/:id/complete`. SMS and optional WhatsApp notifications are attempted safely.
+- Technician preferences: `GET/PATCH /api/technician/profile/work-preferences`; Admin commission management at `/api/admin/technicians/commission` and `/api/admin/technicians/:id/commission`.
+- Technician attendance and leave: `/api/technician/attendance`, `/api/technician/leave-requests`, and Admin review at `/api/admin/technician-leave-requests`.
+- Customer directory and quotation templates: `/api/admin/customers`, `/api/quotation-templates`.
+- Refund requests: `/api/admin/refunds`. Admin can approve/reject, then call `/api/admin/refunds/:id/process` to attempt provider-side execution. bKash uses its refund API; generic providers need `PAYMENT_REFUND_URL`. The system marks a refund processed only after the provider returns a reference; uncertain outcomes move to reconciliation review.
+- Booking deletion is now an archive/soft-delete operation. Payment, finance, refund, and invoice references remain connected to the original booking ID.
+- Optional WhatsApp adapter: set `WHATSAPP_API_URL` and `WHATSAPP_API_TOKEN`. The configured provider must accept JSON `{to, message, context}`; approved WhatsApp templates/provider-specific payloads may require an adapter change.
