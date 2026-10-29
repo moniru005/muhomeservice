@@ -19,7 +19,9 @@ const permitted = async (req, resource, actions) => {
   if (req.user.role !== 'staff') return false;
   const staff = await db().collection('users').findOne({ _id: oid(req.user.sub), role:'staff', accountStatus:'approved' });
   const p = await getRolePermissions('staff');
-  return Boolean(staff && (p[resource] || []).some(x => x === '*' || actions.includes(x)));
+  const legacyAliases = { payments:['managePayments'], inventory:['manageInventory'], bookings:['manageBookings','assignTechnicians'], quotations:['manageQuotations'], reports:['viewReports'] };
+  const legacyGrant = (legacyAliases[resource] || []).some(x => (staff?.permissions || []).includes(x));
+  return Boolean(staff && (legacyGrant || (p[resource] || []).some(x => x === '*' || actions.includes(x))));
 };
 const uploadDir = fileURLToPath(new URL('../../uploads/booking-attachments/', import.meta.url));
 fs.mkdirSync(uploadDir, { recursive:true });
@@ -40,7 +42,8 @@ router.get('/customer/bookings/:id/invoice', requireAuth, async(req,res,next)=>{
     const b=await db().collection('bookings').findOne({_id:id, ...(req.user.role==='admin'?{}:{userId:req.user.sub}), deletedAt:{$exists:false}});
     if(!b) return res.status(404).json({message:'Invoice not found'});
     const entries=await db().collection('financeEntries').find({bookingId:id.toString(),type:'income'}).sort({date:1}).toArray();
-    res.json({invoice:{invoiceNo:`INV-${b.ticketId}`,ticketId:b.ticketId,customer:b.name,phone:b.phone,serviceName:b.serviceName,issuedAt:b.updatedAt||b.createdAt,items:b.invoiceItems||[{description:b.serviceName,quantity:1,unitPrice:Number(b.totalAmount??b.quotedAmount??0)}],total:Number(b.totalAmount??b.quotedAmount??0),paid:Number(b.paymentAmount||0),due:Math.max(0,Number(b.totalAmount??b.quotedAmount??0)-Number(b.paymentAmount||0)),payments:entries}});
+    const paid=entries.length ? entries.reduce((sum,x)=>sum+Number(x.amount||0),0) : Number(b.paymentAmount||b.paidAmount||0);const total=Number(b.totalAmount??b.quotedAmount??0);
+    res.json({invoice:{invoiceNo:`INV-${b.ticketId}`,ticketId:b.ticketId,customer:b.name,phone:b.phone,serviceName:b.serviceName,issuedAt:b.updatedAt||b.createdAt,items:b.invoiceItems||[{description:b.serviceName,quantity:1,unitPrice:total}],total,paid,due:Math.max(0,total-paid),payments:entries}});
   }catch(e){next(e)}
 });
 router.get('/customer/bookings/:id/receipt', requireAuth, async(req,res,next)=>{
@@ -103,6 +106,9 @@ router.post('/technician/leave-requests', requireAuth, requireRole('technician')
 router.get('/technician/leave-requests', requireAuth, requireRole('technician'), async(req,res,next)=>{try{const requests=await db().collection('technicianLeaveRequests').find({technicianId:req.user.sub}).sort({createdAt:-1}).limit(100).toArray();res.json({requests})}catch(e){next(e)}});
 router.get('/admin/technician-leave-requests', requireAdmin, async(req,res,next)=>{try{const requests=await db().collection('technicianLeaveRequests').find({}).sort({createdAt:-1}).limit(500).toArray();res.json({requests})}catch(e){next(e)}});
 router.patch('/admin/technician-leave-requests/:id', requireAdmin, async(req,res,next)=>{try{const status=clean(req.body.status,20);if(!['approved','rejected'].includes(status))return res.status(400).json({message:'Invalid status'});const r=await db().collection('technicianLeaveRequests').updateOne({requestId:req.params.id,status:'pending'},{$set:{status,reviewedAt:new Date(),reviewedBy:req.user.sub}});if(!r.modifiedCount)return res.status(404).json({message:'Pending leave request not found'});res.json({message:`Leave request ${status}`})}catch(e){next(e)}});
+
+// Admin quotation screen: list quotations with linked booking/customer details.
+router.get('/admin/quotations', requireAdmin, async(req,res,next)=>{try{const page=Math.max(1,parseInt(req.query.page,10)||1),limit=Math.min(100,Math.max(1,parseInt(req.query.limit,10)||25));const filter={};if(req.query.status)filter.status=clean(req.query.status,30);const [rows,total]=await Promise.all([db().collection('quotations').find(filter).sort({createdAt:-1}).skip((page-1)*limit).limit(limit).toArray(),db().collection('quotations').countDocuments(filter)]);const ids=[...new Set(rows.map(q=>String(q.bookingId||'')).filter(Boolean))].map(oid).filter(Boolean);const bookings=ids.length?await db().collection('bookings').find({_id:{$in:ids}},{projection:{ticketId:1,name:1,phone:1,serviceName:1,status:1,userId:1,deletedAt:1}}).toArray():[];const byId=new Map(bookings.map(b=>[b._id.toString(),b]));res.json({quotations:rows.map(q=>({...q,booking:byId.get(String(q.bookingId))||null})),pagination:{page,limit,total,pages:Math.max(1,Math.ceil(total/limit))}})}catch(e){next(e)}});
 
 // Customer directory, service-specific quotation templates, refunds.
 router.get('/admin/customers', requireAuth, async(req,res,next)=>{try{if(!(await permitted(req,'customers',['read','*'])))return res.status(403).json({message:'Customer list permission required'});const q=clean(req.query.q,80);const filter={role:'customer'};if(q)filter.$or=['name','phone','email'].map(k=>({[k]:{$regex:q.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),$options:'i'}}));const page=Math.max(1,parseInt(req.query.page,10)||1),limit=Math.min(100,Math.max(1,parseInt(req.query.limit,10)||25));const [customers,total]=await Promise.all([db().collection('users').find(filter,{projection:{passwordHash:0,password:0}}).sort({createdAt:-1}).skip((page-1)*limit).limit(limit).toArray(),db().collection('users').countDocuments(filter)]);res.json({customers,pagination:{page,limit,total,pages:Math.max(1,Math.ceil(total/limit))}})}catch(e){next(e)}});

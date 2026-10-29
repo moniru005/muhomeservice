@@ -90,6 +90,7 @@ export function BookingForm({
     error: "",
     success: null,
   });
+  const [bookingPhotos, setBookingPhotos] = useState([]);
   useEffect(() => {
     if (initialService) setForm((p) => ({ ...p, serviceId: initialService }));
   }, [initialService]);
@@ -147,7 +148,18 @@ export function BookingForm({
         }
         throw new Error(data.message || "বুকিং করা যায়নি");
       }
-      setState({ loading: false, error: "", success: data });
+      let finalData = data;
+      let uploadWarning = "";
+      if (bookingPhotos.length && data.bookingId) {
+        const photoBody = new FormData();
+        bookingPhotos.slice(0, 5).forEach((file) => photoBody.append("photos", file));
+        const photoRes = await fetch(`${API}/customer/bookings/${data.bookingId}/photos`, { method: "POST", headers: { Authorization: `Bearer ${token}` }, body: photoBody });
+        const photoData = await photoRes.json().catch(() => ({}));
+        if (!photoRes.ok) { uploadWarning = `বুকিং তৈরি হয়েছে (${data.ticketId}), কিন্তু ছবি আপলোড হয়নি: ${photoData.message || "Dashboard থেকে আবার আপলোড করুন"}`; }
+        else finalData = { ...data, message: `${data.message || "বুকিং গ্রহণ করা হয়েছে।"} নির্বাচিত ছবিও যুক্ত হয়েছে।` };
+      }
+      setState({ loading: false, error: uploadWarning, success: finalData });
+      setBookingPhotos([]);
       setForm({
         name: current.name || "",
         phone: current.phone || "",
@@ -306,6 +318,11 @@ export function BookingForm({
             <option>বিকাল ৩টা–৬টা</option>
             <option>জরুরি</option>
           </select>
+        </label>
+        <label className="full-field">
+          সমস্যার ছবি (ঐচ্ছিক, সর্বোচ্চ ৫টি)
+          <input type="file" accept="image/jpeg,image/png,image/webp" multiple onChange={(e) => setBookingPhotos(Array.from(e.target.files || []).slice(0, 5))} />
+          <small>{bookingPhotos.length ? `${bookingPhotos.length}টি ছবি নির্বাচিত` : "প্রতি ছবি সর্বোচ্চ ৫ MB; JPG, PNG বা WebP"}</small>
         </label>
         <label className="full-field">
           সমস্যার বিবরণ *

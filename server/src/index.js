@@ -34,7 +34,8 @@ function requireAdminOrStaffPermission(permission) {
       const rolePerms = await getRolePermissions("staff");
       const resourceAction = { managePayments: ["payments", "create"], manageInventory: ["inventory", "update"], manageBookings: ["bookings", "update"], assignTechnicians: ["bookings", "assign"], manageQuotations: ["quotations", "create"], viewReports: ["reports", "read"] }[permission] || ["dashboard", "read"];
       const actions = rolePerms[resourceAction[0]] || [];
-      if (!staff || !actions.some(a => ["*", resourceAction[1], ...(resourceAction[1] === "create" ? ["update"] : [])].includes(a))) return res.status(403).json({ message: `Role & Permission Manager অনুযায়ী ${resourceAction[0]}:${resourceAction[1]} অনুমতি নেই।` });
+      const legacyGrant = Boolean(staff?.permissions?.includes(permission));
+      if (!staff || (!legacyGrant && !actions.some(a => ["*", resourceAction[1], ...(resourceAction[1] === "create" ? ["update"] : [])].includes(a)))) return res.status(403).json({ message: `Role & Permission Manager অনুযায়ী ${resourceAction[0]}:${resourceAction[1]} অনুমতি নেই।` });
       next();
     } catch (e) { next(e); }
   });
@@ -239,8 +240,17 @@ app.get("/api/dashboard/summary", async (req, res, next) => {
             .limit(100)
             .toArray(),
         ]);
+        // Resolve the signed-in technician's decision server-side. This avoids
+        // UI identity-shape mismatches (_id vs id) and keeps the decision hidden
+        // after refresh/re-login.
+        const dashboardBookings = role === "technician"
+          ? bookings.map((booking) => ({
+              ...booking,
+              myTechnicianDecision: booking.technicianDecisions?.[req.user.sub] || null,
+            }))
+          : bookings;
         res.set("Cache-Control", "no-store");
-        res.json({ total, completed, bookings, role, canAssign });
+        res.json({ total, completed, bookings: dashboardBookings, role, canAssign });
       } catch (e) {
         next(e);
       }
@@ -361,7 +371,9 @@ app.patch(
           "assignTechnicians",
           "manageQuotations",
           "manageBookings",
+          "managePayments",
           "manageInventory",
+          "viewReports",
         ].includes(permission)
       )
         return res.status(400).json({ message: "Invalid permission" });

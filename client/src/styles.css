@@ -474,3 +474,32 @@ button,a,input,select,textarea{transition:background-color .18s ease,border-colo
 .admin-page .management-summary-card.summary-inventory{color:#0284a8;background:linear-gradient(135deg,#ecfeff 0%,#fff 85%)!important;border-color:#a5f3fc!important}
 .admin-page .management-summary-card.summary-inventory .management-summary-icon{background:#cffafe;color:#0891b2}
 @media(max-width:600px){.admin-page .management-summary-card{min-height:130px;padding:16px!important}.admin-page .management-summary-card .management-summary-icon{right:12px;top:12px;width:35px;height:35px}.admin-page .management-summary-card>span{padding-right:40px}.admin-page .management-summary-card>b{font-size:24px}.admin-page .management-summary-card>small{font-size:10px;margin-top:9px}}
+
+/* Admin operations: tabbed commission, payment/refund, and customer panels */
+.admin-operations-tabs{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:12px 0 14px;padding:7px;background:#eef3fb;border:1px solid #dce6f5;border-radius:13px}
+.admin-operations-tab{appearance:none;border:1px solid transparent;background:transparent;color:#43546c;border-radius:9px;padding:10px 15px;font:inherit;font-weight:700;font-size:12px;line-height:1.35;cursor:pointer;transition:background .18s ease,color .18s ease,box-shadow .18s ease,border-color .18s ease}
+.admin-operations-tab:hover{background:#fff;border-color:#d5e0f0;color:#2349b8}
+.admin-operations-tab.is-active{background:linear-gradient(135deg,#3158dc,#2442b7);border-color:#3158dc;color:#fff;box-shadow:0 5px 13px #3158dc2b}
+.admin-operations-tab:focus-visible{outline:3px solid #91b4ff;outline-offset:2px}
+@media(max-width:640px){.admin-operations-tabs{display:grid;grid-template-columns:1fr;padding:6px}.admin-operations-tab{text-align:left;width:100%}}
+
+/* Customer service history: compact rows with an expandable, tidy action panel. */
+.user-dashboard .customer-history-actions-cell { min-width: 190px; max-width: 260px; vertical-align: middle; }
+.user-dashboard .customer-history-actions { width: 100%; }
+.user-dashboard .customer-history-actions > summary { list-style: none; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 13px; border: 1px solid #dbe5f3; border-radius: 11px; background: linear-gradient(135deg,#fff 0%,#f5f8ff 100%); color: #2444a6; font-weight: 700; font-size: 12px; cursor: pointer; transition: border-color .18s ease, box-shadow .18s ease, background .18s ease; }
+.user-dashboard .customer-history-actions > summary::-webkit-details-marker { display: none; }
+.user-dashboard .customer-history-actions > summary::after { content: '+'; display: grid; place-items: center; width: 23px; height: 23px; flex: 0 0 23px; border-radius: 7px; background: #e8efff; color: #3154d4; font-size: 17px; }
+.user-dashboard .customer-history-actions[open] > summary::after { content: '−'; }
+.user-dashboard .customer-history-actions > summary:hover { border-color: #8da7f6; box-shadow: 0 5px 14px #2547a512; }
+.user-dashboard .customer-actions-count { color: #75839a; font-size: 10px; font-weight: 500; }
+.user-dashboard .customer-history-actions-panel { margin-top: 9px; padding: 12px; border: 1px solid #e3eaf5; border-radius: 12px; background: #fbfcff; box-shadow: 0 8px 22px #193d7608; }
+.user-dashboard .customer-action-buttons { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
+.user-dashboard .customer-action-buttons .btn { min-height: 34px; border-radius: 8px; padding: 8px 11px; white-space: normal; line-height: 1.4; }
+.user-dashboard .customer-action-buttons .customer-file-action { display: inline-flex; align-items: center; }
+.user-dashboard .customer-feedback-panel { display: grid; gap: 9px; margin-top: 12px; padding-top: 12px; border-top: 1px solid #e4eaf3; }
+.user-dashboard .customer-feedback-panel h4 { margin: 0; color: #273c63; font-size: 13px; }
+.user-dashboard .customer-feedback-panel label { display: flex; align-items: center; gap: 10px; color: #66758c; font-size: 11px; }
+.user-dashboard .customer-feedback-panel select { width: auto; min-width: 90px; padding: 8px 10px; }
+.user-dashboard .customer-feedback-panel textarea { width: 100%; min-height: 72px; resize: vertical; border: 1px solid #dce5f1; border-radius: 9px; padding: 10px 12px; background: #fff; font: inherit; font-size: 12px; }
+.user-dashboard .customer-feedback-panel .btn { justify-self: start; }
+@media (max-width: 760px) { .user-dashboard .customer-history-actions-cell { min-width: 190px; } .user-dashboard .customer-history-actions-panel { padding: 9px; } .user-dashboard .customer-action-buttons { gap: 6px; } }

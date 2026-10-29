@@ -29,7 +29,8 @@ async function canSeeBooking(req, booking) {
     const u = await approvedUser(req);
     if (!u) return false;
     const perms = await getRolePermissions("staff");
-    return Boolean((perms.bookings || []).some(a => ["*","read","update","assign","status"].includes(a)) || (perms.quotations || []).some(a => ["*","read","create","update"].includes(a)) || (perms.reports || []).some(a => ["*","read"].includes(a)));
+    const legacy = u.permissions || [];
+    return Boolean(legacy.some(x => ["manageBookings","assignTechnicians","manageQuotations","viewReports"].includes(x)) || (perms.bookings || []).some(a => ["*","read","update","assign","status"].includes(a)) || (perms.quotations || []).some(a => ["*","read","create","update"].includes(a)) || (perms.reports || []).some(a => ["*","read"].includes(a)));
   }
   return booking.userId === req.user.sub;
 }
@@ -97,6 +98,7 @@ router.post(
         afterPhotos: Array.isArray(afterPhotos)
           ? afterPhotos.slice(0, 10).map(String)
           : [],
+        evidencePhotos: (booking.workPhotos || []).slice(-10).map(photo => ({ url: String(photo.url || ""), name: String(photo.name || ""), uploadedAt: photo.uploadedAt || null })).filter(photo => photo.url),
         createdAt: new Date(),
         createdBy: req.user.sub,
         createdByEmail: req.user.email,
@@ -136,7 +138,7 @@ router.get(
       if (req.user.role === "staff") {
         const u = await approvedUser(req);
         const rp = await getRolePermissions("staff");
-        if (!u || !((rp.reports || []).some(a => ["*","read"].includes(a)) || (rp.bookings || []).some(a => ["*","read","update","assign"].includes(a))))
+        if (!u || (!((u.permissions || []).includes("viewReports") || (u.permissions || []).includes("manageBookings")) && !((rp.reports || []).some(a => ["*","read"].includes(a)) || (rp.bookings || []).some(a => ["*","read","update","assign"].includes(a)))))
           return res
             .status(403)
             .json({ message: "Service report access denied" });
@@ -192,8 +194,10 @@ router.post(
           .status(403)
           .json({ message: "Approved staff account required" });
       const rolePerms = req.user.role === "staff" ? await getRolePermissions("staff") : {};
+      const hasIndividualQuotationGrant = Boolean((user?.permissions || []).includes("manageQuotations"));
       if (
         req.user.role === "staff" &&
+        !hasIndividualQuotationGrant &&
         !(rolePerms.quotations || []).some(a => ["*", "create"].includes(a))
       )
         return res
@@ -348,7 +352,7 @@ router.patch(
           { _id: b._id },
           {
             $set: {
-              status: decision === "approved" ? "Approved" : "Inspection",
+              status: decision === "approved" ? "Approved" : "Quotation rejected",
               updatedAt: new Date(),
             },
           },
@@ -370,6 +374,10 @@ router.patch(
     }
   },
 );
+router.post('/operations/customer/bookings/:id/request-quotation', requireAuth, requireRole('customer'), async(req,res,next)=>{
+  try { const id=oid(req.params.id);if(!id)return res.status(400).json({message:'Invalid booking ID'});const col=db().collection('bookings');const b=await col.findOne({_id:id,userId:req.user.sub,deletedAt:{$exists:false}});if(!b)return res.status(404).json({message:'Booking not found'});if(!['Quotation rejected','Inspection'].includes(b.status))return res.status(409).json({message:'নতুন Quotation চাওয়ার জন্য Booking-এর Status Quotation rejected বা Inspection হতে হবে।'});const now=new Date();const result=await col.updateOne({_id:id,userId:req.user.sub,status:b.status},{$set:{status:'Inspection',quotationReRequestAt:now,updatedAt:now},$inc:{quotationReRequestCount:1},$push:{statusHistory:{status:'Inspection',at:now,by:req.user.sub,byRole:'customer',note:'Customer requested a new quotation'}}});if(!result.modifiedCount)return res.status(409).json({message:'Booking পরিবর্তিত হয়েছে; refresh করে আবার চেষ্টা করুন।'});await db().collection('notifications').insertOne({recipientRole:'staff',type:'quotation-request',title:'নতুন Quotation অনুরোধ',message:`${b.ticketId}: Customer নতুন Quotation চেয়েছেন`,bookingId:id.toString(),createdAt:now,read:false});res.json({message:'নতুন Quotation-এর অনুরোধ Staff/Admin-এর কাছে পাঠানো হয়েছে।'}); }catch(e){next(e)}
+});
+
 router.get(
   "/operations/customer/quotations",
   requireAuth,
@@ -412,6 +420,7 @@ import { fileURLToPath } from "node:url";
 const evidenceDir = fileURLToPath(new URL("../../uploads/service-reports/", import.meta.url));
 fs.mkdirSync(evidenceDir, { recursive:true });
 const evidenceUpload = multer({ storage:multer.diskStorage({ destination:(_req,_file,cb)=>cb(null,evidenceDir), filename:(req,file,cb)=>cb(null, `${req.user.sub}-${Date.now()}-${randomUUID().slice(0,8)}${path.extname(file.originalname).toLowerCase()}`) }), limits:{fileSize:5*1024*1024, files:5}, fileFilter:(_req,file,cb)=>cb(null,["image/jpeg","image/png","image/webp"].includes(file.mimetype)) });
+router.post("/operations/bookings/:id/photos", requireAuth, requireRole("technician","staff","admin"), evidenceUpload.array("photos",5), async(req,res,next)=>{try{if(!ObjectId.isValid(req.params.id))return res.status(400).json({message:"Invalid booking ID"});const b=await db().collection("bookings").findOne({_id:new ObjectId(req.params.id)});if(!(await canSeeBooking(req,b)))return res.status(404).json({message:"Booking not found or access denied"});if(req.user.role==="staff"){const staff=await approvedUser(req);const rp=await getRolePermissions("staff");if(!staff||(!((staff.permissions||[]).includes("manageBookings"))&&!((rp.bookings||[]).some(a=>["*","update"].includes(a)))))return res.status(403).json({message:"Report photo upload permission required"})}if(req.user.role==="technician"&&!(b.technicianIds||[]).includes(req.user.sub)&&b.technicianId!==req.user.sub)return res.status(403).json({message:"এই কাজটি আপনার নামে assign করা নেই।"});const photos=(req.files||[]).map(f=>({url:`/api/uploads/service-reports/${f.filename}`,name:f.originalname,mimeType:f.mimetype,size:f.size,uploadedAt:new Date(),uploadedBy:req.user.sub}));if(!photos.length)return res.status(400).json({message:"কমপক্ষে একটি ছবি নির্বাচন করুন।"});await db().collection("bookings").updateOne({_id:b._id},{$push:{workPhotos:{$each:photos}},$set:{updatedAt:new Date()}});res.status(201).json({message:"Report evidence photos uploaded",photos})}catch(e){next(e)}});
 router.post("/technician/bookings/:id/photos", requireAuth, requireRole("technician"), evidenceUpload.array("photos",5), async (req,res,next)=>{
   try {
     if (!ObjectId.isValid(req.params.id)) return res.status(400).json({message:"Invalid booking ID"});

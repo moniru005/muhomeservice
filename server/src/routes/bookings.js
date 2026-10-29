@@ -8,7 +8,7 @@ import { requirePermission, getRolePermissions } from '../middleware/permissions
 import { notifySmsSafely, notifyWhatsAppSafely } from '../services/integrations.js';
 
 const router = Router();
-const statuses = ['New', 'Contacted', 'Assigned', 'On the way', 'Inspection', 'Quotation sent', 'Approved', 'In progress', 'Completed', 'Cancelled'];
+const statuses = ['New', 'Contacted', 'Assigned', 'On the way', 'Inspection', 'Quotation sent', 'Quotation rejected', 'Approved', 'In progress', 'Completed', 'Cancelled'];
 
 router.post('/bookings', requireAuth, requireRole('customer'), async (req, res, next) => {
   try {
@@ -34,9 +34,9 @@ router.post('/bookings', requireAuth, requireRole('customer'), async (req, res, 
       preferredTime: String(req.body.preferredTime || 'যেকোনো সময়'), problem, status: 'New',
       adminNote: '', createdAt: new Date(), updatedAt: new Date()
     };
-    await getDB().collection('bookings').insertOne(booking);
+    const insertedBooking = await getDB().collection('bookings').insertOne(booking);
     await Promise.all([notifySmsSafely({ to: phone, message: `MU Home Service: আপনার বুকিং ${booking.ticketId} গ্রহণ করা হয়েছে। Status: New.`, context: 'booking-created' }), notifyWhatsAppSafely({ to: phone, message: `MU Home Service: আপনার বুকিং ${booking.ticketId} গ্রহণ করা হয়েছে। Status: New.`, context: 'booking-created' })]);
-    res.status(201).json({ message: 'আপনার বুকিং গ্রহণ করা হয়েছে। আমরা ফোন করে নিশ্চিত করব।', ticketId: booking.ticketId });
+    res.status(201).json({ message: 'আপনার বুকিং গ্রহণ করা হয়েছে। আমরা ফোন করে নিশ্চিত করব।', ticketId: booking.ticketId, bookingId: insertedBooking.insertedId.toString() });
   } catch (err) { next(err); }
 });
 
@@ -65,6 +65,20 @@ router.patch('/customer/bookings/:id/cancel', requireAuth, requireRole('customer
     res.json({ message: 'Booking cancelled successfully', status: 'Cancelled' });
   } catch (e) { next(e); }
 });
+router.patch('/customer/bookings/:id/reschedule', requireAuth, requireRole('customer'), async (req,res,next)=>{
+  try {
+    const id=ObjectId.isValid(req.params.id)?new ObjectId(req.params.id):null; if(!id)return res.status(400).json({message:'Invalid booking ID'});
+    const preferredDate=String(req.body.preferredDate||'').trim(), preferredTime=String(req.body.preferredTime||'').trim();
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(preferredDate)||!preferredTime||preferredTime.length>80)return res.status(400).json({message:'সঠিক নতুন তারিখ ও সময় দিন।'});
+    const today=new Date();today.setHours(0,0,0,0);const date=new Date(`${preferredDate}T00:00:00`);if(Number.isNaN(date.getTime())||date<today)return res.status(400).json({message:'আগের তারিখে reschedule করা যাবে না।'});
+    const col=getDB().collection('bookings');const b=await col.findOne({_id:id,userId:req.user.sub,deletedAt:{$exists:false}});if(!b)return res.status(404).json({message:'Booking not found'});
+    if(!['New','Contacted'].includes(b.status))return res.status(409).json({message:'শুধু New/Contacted Booking Customer নিজে reschedule করতে পারবেন।'});
+    const now=new Date();const r=await col.updateOne({_id:id,userId:req.user.sub,status:b.status},{$set:{preferredDate,preferredTime,rescheduleRequestedAt:now,updatedAt:now},$push:{statusHistory:{status:b.status,at:now,by:req.user.sub,byRole:'customer',note:`Reschedule requested: ${preferredDate} ${preferredTime}`}}});if(!r.modifiedCount)return res.status(409).json({message:'Booking পরিবর্তিত হয়েছে; refresh করে আবার চেষ্টা করুন।'});
+    await Promise.all([notifySmsSafely({to:b.phone,message:`MU Home Service: ${b.ticketId} বুকিংয়ের নতুন সময়ের অনুরোধ: ${preferredDate}, ${preferredTime}.`,context:'booking-reschedule'}),notifyWhatsAppSafely({to:b.phone,message:`MU Home Service: ${b.ticketId} বুকিংয়ের নতুন সময়ের অনুরোধ: ${preferredDate}, ${preferredTime}.`,context:'booking-reschedule'}),getDB().collection('notifications').insertOne({recipientRole:'staff',type:'booking-reschedule',title:'Booking Reschedule Request',message:`${b.ticketId}: ${preferredDate} ${preferredTime}`,bookingId:id.toString(),createdAt:now,read:false})]);
+    res.json({message:'নতুন তারিখ ও সময়ের অনুরোধ জমা হয়েছে। টিম নিশ্চিত করলে আপনাকে জানানো হবে।',preferredDate,preferredTime});
+  }catch(e){next(e)}
+});
+
 router.get('/customer/payments', requireAuth, requireRole('customer'), async (req, res, next) => {
   try {
     const bookings = await getDB().collection('bookings').find({ userId: req.user.sub }).project({ ticketId:1, serviceName:1, payments:1, paymentAmount:1, paymentStatus:1, quotedAmount:1, totalAmount:1, createdAt:1 }).sort({ createdAt:-1 }).limit(500).toArray();
@@ -120,7 +134,7 @@ router.patch('/bookings/:id/status', requireAuth, async (req, res, next) => {
       if (!staff) return res.status(403).json({ message: 'Approved staff account required' });
       const { getRolePermissions } = await import('../middleware/permissions.js');
       const perms = await getRolePermissions('staff');
-      if (!(perms.bookings || []).some(a => ['*','update','status'].includes(a))) return res.status(403).json({ message: 'Role Permission Manager অনুযায়ী Booking status পরিবর্তনের অনুমতি নেই।' });
+      if (!(staff.permissions || []).includes('manageBookings') && !(perms.bookings || []).some(a => ['*','update','status'].includes(a))) return res.status(403).json({ message: 'Role Permission Manager অনুযায়ী Booking status পরিবর্তনের অনুমতি নেই।' });
     } else if (req.user.role !== 'admin') return res.status(403).json({ message: 'Booking status পরিবর্তনের অনুমতি নেই।' });
     if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ message:'Invalid booking ID' });
     const status = String(req.body.status || '');
@@ -138,7 +152,7 @@ router.get('/bookings/assignable-technicians', requireAuth, async (req, res, nex
     if (req.user.role !== 'admin') {
       const staff = await getDB().collection('users').findOne({ _id: new ObjectId(req.user.sub), role: 'staff', accountStatus: 'approved' });
       const rp = await getRolePermissions('staff');
-      if (!staff || !(rp.bookings || []).some(a => ['*','assign'].includes(a))) return res.status(403).json({ message: 'Role Permission Manager অনুযায়ী Technician assign করার অনুমতি নেই।' });
+      if (!staff || (!(staff.permissions || []).includes('assignTechnicians') && !(rp.bookings || []).some(a => ['*','assign'].includes(a)))) return res.status(403).json({ message: 'Role Permission Manager অনুযায়ী Technician assign করার অনুমতি নেই।' });
     }
     const technicians = await getDB().collection('users').find({ role: 'technician', technicianStatus: 'approved', accountStatus: 'approved' }, { projection: { name: 1, phone: 1, email: 1 } }).sort({ name: 1 }).toArray();
     res.json({ technicians });
@@ -153,7 +167,7 @@ router.patch('/bookings/:id/technicians', requireAuth, async (req, res, next) =>
     if (req.user.role !== 'admin') {
       const staff = await db.collection('users').findOne({ _id: new ObjectId(req.user.sub), role: 'staff', accountStatus: 'approved' });
       const rp = await getRolePermissions('staff');
-      if (!staff || !(rp.bookings || []).some(a => ['*','assign'].includes(a))) return res.status(403).json({ message: 'Role Permission Manager অনুযায়ী Technician assign করার অনুমতি নেই।' });
+      if (!staff || (!(staff.permissions || []).includes('assignTechnicians') && !(rp.bookings || []).some(a => ['*','assign'].includes(a)))) return res.status(403).json({ message: 'Role Permission Manager অনুযায়ী Technician assign করার অনুমতি নেই।' });
     }
     if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ message: 'Invalid booking ID' });
     const ids = [...new Set((Array.isArray(req.body.technicianIds) ? req.body.technicianIds : []).map(String))];

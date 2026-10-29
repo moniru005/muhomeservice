@@ -185,3 +185,7 @@ The current integration package includes a bKash Tokenized Checkout adapter (san
 - Refund requests: `/api/admin/refunds`. Admin can approve/reject, then call `/api/admin/refunds/:id/process` to attempt provider-side execution. bKash uses its refund API; generic providers need `PAYMENT_REFUND_URL`. The system marks a refund processed only after the provider returns a reference; uncertain outcomes move to reconciliation review.
 - Booking deletion is now an archive/soft-delete operation. Payment, finance, refund, and invoice references remain connected to the original booking ID.
 - Optional WhatsApp adapter: set `WHATSAPP_API_URL` and `WHATSAPP_API_TOKEN`. The configured provider must accept JSON `{to, message, context}`; approved WhatsApp templates/provider-specific payloads may require an adapter change.
+
+### Role workflow fixes (29 Oct 2026)
+
+Latest role fixes add booking-form photo upload, customer reschedule requests, a new-quotation request after rejection, readable invoice/receipt dialogs, direct Service Report photo uploads, searchable paginated Customer Directory, and an Admin Quotation screen. Staff permission toggles now accept `managePayments` and `viewReports`, and protected finance/report/quotation/booking operations honor these individual grants alongside role-level permissions. Booking deletion remains an archive to preserve financial relationships. See `ROLE-ENHANCEMENTS-2026-10.md` for details and verification limits.

@@ -65,6 +65,7 @@ export function AdminPage() {
     JSON.parse(sessionStorage.getItem("muAdmin") || "null"),
   );
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+  const [adminOpsTab, setAdminOpsTab] = useState("requests");
   const [login, setLogin] = useState({ email: "", password: "" });
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -72,6 +73,9 @@ export function AdminPage() {
   const [assignableTechnicians, setAssignableTechnicians] = useState([]);
   const [commissionTechnicians, setCommissionTechnicians] = useState([]);
   const [customerDirectory, setCustomerDirectory] = useState([]);
+  const [customerQuery, setCustomerQuery] = useState("");
+  const [customerPage, setCustomerPage] = useState(1);
+  const [customerPagination, setCustomerPagination] = useState({page:1,pages:1,total:0,limit:25});
   const [onlinePayments, setOnlinePayments] = useState([]);
   const [refundRequests, setRefundRequests] = useState([]);
   const [assignmentSelections, setAssignmentSelections] = useState({});
@@ -129,7 +133,7 @@ export function AdminPage() {
         api("/admin/stats"),
         api("/admin/technicians"),
         api("/admin/technicians/commission"),
-        api("/admin/customers?limit=10"),
+        api(`/admin/customers?q=${encodeURIComponent(customerQuery)}&page=${customerPage}&limit=25`),
         api("/admin/online-payments"),
         api("/admin/refunds"),
       ]);
@@ -139,6 +143,7 @@ export function AdminPage() {
       setAssignableTechnicians((tech.technicians || []).filter(t => (t.technicianStatus || t.accountStatus) === "approved"));
       setCommissionTechnicians(commissions.technicians || []);
       setCustomerDirectory(customers.customers || []);
+      setCustomerPagination(customers.pagination || {page:1,pages:1,total:customers.customers?.length||0,limit:25});
       setOnlinePayments(online.payments || []);
       setRefundRequests(refunds.refunds || []);
       setError("");
@@ -153,7 +158,7 @@ export function AdminPage() {
   }
   useEffect(() => {
     if (token) refresh();
-  }, [token, statusFilter, bookingPage]);
+  }, [token, statusFilter, bookingPage, customerPage]);
   function logout() {
     sessionStorage.removeItem("muAdminToken");
     sessionStorage.removeItem("muAdmin");
@@ -296,6 +301,9 @@ export function AdminPage() {
             <Link className="btn btn-primary" to="/admin/cms">
               CMS / Page Builder
             </Link>
+            <Link className="btn btn-outline" to="/admin/management">
+              Management Center
+            </Link>
             <Link className="btn btn-outline" to="/operations">
               Service Operations
             </Link>
@@ -356,6 +364,13 @@ export function AdminPage() {
             <small>{statusFilter === "Completed" ? "সব request দেখুন" : "Completed request দেখুন"} →</small>
           </button>
         </div>
+        <div className="admin-operations-tabs" role="tablist" aria-label="Admin operations">
+          <button type="button" role="tab" aria-selected={adminOpsTab === "requests"} className={`admin-operations-tab${adminOpsTab === "requests" ? " is-active" : ""}`} onClick={() => setAdminOpsTab("requests")}>All Requests</button>
+          <button type="button" role="tab" aria-selected={adminOpsTab === "commission"} className={`admin-operations-tab${adminOpsTab === "commission" ? " is-active" : ""}`} onClick={() => setAdminOpsTab("commission")}>Technician Commission Rate</button>
+          <button type="button" role="tab" aria-selected={adminOpsTab === "payments"} className={`admin-operations-tab${adminOpsTab === "payments" ? " is-active" : ""}`} onClick={() => setAdminOpsTab("payments")}>Online Payments &amp; Refunds</button>
+          <button type="button" role="tab" aria-selected={adminOpsTab === "customers"} className={`admin-operations-tab${adminOpsTab === "customers" ? " is-active" : ""}`} onClick={() => setAdminOpsTab("customers")}>Customer Directory</button>
+        </div>
+        {adminOpsTab === "commission" && (
         <div className="admin-table-card" style={{marginBottom:18}}>
           <div className="table-toolbar"><div><h2>Technician Commission Rate</h2><p>প্রতিটি Technician-এর কমিশন হার Admin এখান থেকে নিয়ন্ত্রণ করতে পারবেন।</p></div></div>
           <div className="table-scroll"><table className="bookings-table"><thead><tr><th>Technician</th><th>Skills / Area</th><th>Commission %</th><th>Action</th></tr></thead><tbody>
@@ -363,6 +378,8 @@ export function AdminPage() {
             {!commissionTechnicians.length&&<tr><td colSpan="4">Technician পাওয়া যায়নি।</td></tr>}
           </tbody></table></div>
         </div>
+        )}
+        {adminOpsTab === "payments" && (
         <div className="admin-table-card" style={{marginBottom:18}}>
           <div className="table-toolbar"><div><h2>Online Payments & Refunds</h2><p>Refund request তৈরি করুন এবং Provider-side refund যাচাইয়ের পরে status আপডেট করুন।</p></div></div>
           <div className="table-scroll"><table className="bookings-table"><thead><tr><th>Payment</th><th>Booking</th><th>Amount</th><th>Status</th><th>Refund</th></tr></thead><tbody>
@@ -371,10 +388,16 @@ export function AdminPage() {
           </tbody></table></div>
           <div className="table-scroll" style={{marginTop:16}}><table className="bookings-table"><thead><tr><th>Refund ID</th><th>Ticket</th><th>Amount</th><th>Reason</th><th>Status / Review</th></tr></thead><tbody>{refundRequests.map(r=><tr key={r.refundId}><td>{r.refundId}</td><td>{r.ticketId||r.bookingId}</td><td>৳{Number(r.amount||0).toLocaleString('en-BD')}</td><td>{r.reason}</td><td><div style={{display:'flex',gap:6,alignItems:'center',flexWrap:'wrap'}}><span>{r.status}</span>{['requested','approved','reconciliation_required'].includes(r.status)&&<><button className="btn btn-outline btn-small" onClick={async()=>{try{await api(`/admin/refunds/${r.refundId}`,{method:'PATCH',body:JSON.stringify({status:'approved'})});setNotice('Refund approved; provider-side refund execute করে reference সংরক্ষণ করুন।');await refresh()}catch(e){setError(e.message)}}}>Approve</button><button className="btn btn-outline btn-small" onClick={async()=>{try{await api(`/admin/refunds/${r.refundId}`,{method:'PATCH',body:JSON.stringify({status:'rejected',reviewNote:'Rejected by admin'})});await refresh()}catch(e){setError(e.message)}}}>Reject</button><button className="btn btn-primary btn-small" onClick={async()=>{if(!window.confirm('Provider-এর refund API কল করে refund process করবেন?'))return;try{const result=await api(`/admin/refunds/${r.refundId}/process`,{method:'POST',body:JSON.stringify({})});setNotice(`Refund provider থেকে নিশ্চিত হয়েছে: ${result.providerRefundReference||''}`);await refresh()}catch(e){setError(e.message)}}}>Process provider refund</button></>}</div></td></tr>)}{!refundRequests.length&&<tr><td colSpan="5">কোনো Refund request নেই।</td></tr>}</tbody></table></div>
         </div>
+        )}
+        {adminOpsTab === "customers" && (
         <div className="admin-table-card" style={{marginBottom:18}}>
-          <div className="table-toolbar"><div><h2>Recent Customers</h2><p>Customer Directory API থেকে সাম্প্রতিক Customer তালিকা।</p></div><span>{customerDirectory.length} shown</span></div>
-          <div className="table-scroll"><table className="bookings-table"><thead><tr><th>Name</th><th>Phone</th><th>Email</th><th>Account</th></tr></thead><tbody>{customerDirectory.map(c=><tr key={c._id}><td>{c.name}</td><td>{c.phone||'—'}</td><td>{c.email||'—'}</td><td>{c.accountStatus||'active'}</td></tr>)}{!customerDirectory.length&&<tr><td colSpan="4">কোনো Customer নেই।</td></tr>}</tbody></table></div>
+          <div className="table-toolbar"><div><h2>Customer Directory</h2><p>সব Customer খুঁজুন; ফলাফল পেজ অনুযায়ী দেখানো হয়।</p></div><span>{customerPagination.total||0} customers</span></div>
+          <div className="table-filters"><label className="search-box"><Search size={17}/><input value={customerQuery} onChange={e=>setCustomerQuery(e.target.value)} onKeyDown={e=>e.key==='Enter'&&(setCustomerPage(1),refresh())} placeholder="নাম, ফোন বা Email দিয়ে খুঁজুন"/></label><button className="btn btn-outline btn-small" onClick={()=>{setCustomerPage(1);refresh()}}>Search</button></div>
+          <div className="table-scroll"><table className="bookings-table"><thead><tr><th>Name</th><th>Phone</th><th>Email</th><th>Account</th><th>Registered</th></tr></thead><tbody>{customerDirectory.map(c=><tr key={c._id}><td>{c.name}</td><td>{c.phone||'—'}</td><td>{c.email||'—'}</td><td>{c.accountStatus||'active'}</td><td>{c.createdAt?new Date(c.createdAt).toLocaleDateString('bn-BD'):'—'}</td></tr>)}{!customerDirectory.length&&<tr><td colSpan="5">কোনো Customer নেই।</td></tr>}</tbody></table></div>
+          <div style={{display:'flex',gap:10,alignItems:'center',justifyContent:'flex-end',marginTop:12}}><span>Page {customerPagination.page||1} / {customerPagination.pages||1}</span><button className="btn btn-outline btn-small" disabled={(customerPagination.page||1)<=1} onClick={()=>setCustomerPage(p=>Math.max(1,p-1))}>Previous</button><button className="btn btn-outline btn-small" disabled={(customerPagination.page||1)>=(customerPagination.pages||1)} onClick={()=>setCustomerPage(p=>Math.min(customerPagination.pages||1,p+1))}>Next</button></div>
         </div>
+        )}
+        {adminOpsTab === "requests" && (
         <div className="admin-table-card">
           <div className="table-toolbar">
             <div>
@@ -403,6 +426,7 @@ export function AdminPage() {
                   "On the way",
                   "Inspection",
                   "Quotation sent",
+                  "Quotation rejected",
                   "Approved",
                   "In progress",
                   "Completed",
@@ -475,6 +499,7 @@ export function AdminPage() {
                             "On the way",
                             "Inspection",
                             "Quotation sent",
+                            "Quotation rejected",
                             "Approved",
                             "In progress",
                             "Completed",
@@ -510,6 +535,7 @@ export function AdminPage() {
           )}
           <div className="table-toolbar" style={{marginTop:16}}><small>মোট {bookingPagination.total} টি Booking · Page {bookingPagination.page} / {bookingPagination.pages}</small><div style={{display:"flex",gap:8}}><button className="btn btn-outline btn-small" disabled={bookingPage<=1} onClick={()=>setBookingPage(p=>Math.max(1,p-1))}>Previous</button><button className="btn btn-primary btn-small" disabled={bookingPage>=bookingPagination.pages} onClick={()=>setBookingPage(p=>Math.min(bookingPagination.pages,p+1))}>Next</button></div></div>
         </div>
+        )}
         <p className="admin-security-note">
           <ShieldCheck size={15} /> Admin API is protected by JWT. Log out when
           finished, especially on shared devices.
@@ -876,6 +902,8 @@ export function AdminOperationsPage() {
   });
   const [editingItemId, setEditingItemId] = useState("");
   const [opsBookings, setOpsBookings] = useState([]);
+  const [adminQuotations, setAdminQuotations] = useState([]);
+  const [quotationPagination, setQuotationPagination] = useState({page:1,pages:1,total:0,limit:25});
   const [onlinePayments, setOnlinePayments] = useState({ payments: [], counts: {} });
   const [integrationConfig, setIntegrationConfig] = useState({ onlinePaymentAvailable: false, smsNotificationsEnabled: false, paymentProvider: "bkash", currency: "BDT", smsProvider: "mimsms" });
   const [serviceReports, setServiceReports] = useState([]);
@@ -907,6 +935,7 @@ export function AdminOperationsPage() {
       ]);
       setData({ ...f, ...i, ...t, ...st, ...summary });
       setOpsBookings(bookingResult.bookings || []); setOnlinePayments(onlinePaymentResult || { payments: [], counts: {} }); setIntegrationConfig(integrationResult || { onlinePaymentAvailable: false, smsNotificationsEnabled: false, paymentProvider: "bkash", currency: "BDT", smsProvider: "mimsms" }); setServiceReports(reportResult.reports || []); setPartsRequests(partsResult.requests || []);
+      const quotationResult = await request("/admin/quotations?limit=100"); setAdminQuotations(quotationResult.quotations || []); setQuotationPagination(quotationResult.pagination || {page:1,pages:1,total:0,limit:100});
     } catch (e) {
       setError(e.message);
     }
@@ -1082,6 +1111,7 @@ export function AdminOperationsPage() {
             ["staff", `Staff Account Approval${data.staff.filter(m => (m.accountStatus || "pending") === "pending").length ? ` (${data.staff.filter(m => (m.accountStatus || "pending") === "pending").length})` : ""}`],
             ["finance", "আয়-ব্যয়"],
             ["payments", "Booking Payments"],
+            ["quotations", "Quotations"],
             ["inventory", "Inventory"],
           ].map(([v, l]) => (
             <button
@@ -1221,7 +1251,7 @@ export function AdminOperationsPage() {
             </div>
             <div className="table-scroll">
               <table className="bookings-table">
-                <thead><tr><th>নাম</th><th>Email</th><th>Phone</th><th>Registration Date</th><th>Status / Action</th><th>Permissions</th></tr></thead>
+                <thead><tr><th>নাম</th><th>Email</th><th>Phone</th><th>Registration Date</th><th>Status / Action</th></tr></thead>
                 <tbody>
                   {data.staff.map((member) => {
                     const status = member.accountStatus || "pending";
@@ -1237,10 +1267,9 @@ export function AdminOperationsPage() {
                           <option value="suspended">Suspended</option>
                         </select>
                       </td>
-                      <td><div style={{display:"grid",gap:6,minWidth:190}}>{[["assignTechnicians","Assign technician(s)"],["manageQuotations","Create quotations"],["manageBookings","Manage bookings"],["managePayments","Manage payments & finance"],["manageInventory","Manage inventory"]].map(([permission,label])=><label key={permission} style={{display:"flex",gap:8,alignItems:"center"}}><input type="checkbox" checked={(member.permissions||[]).includes(permission)} disabled={status!=="approved"} onChange={async e=>{try{await request(`/admin/staff/${member._id}/permissions`,{method:"PATCH",body:JSON.stringify({permission,enabled:e.target.checked})});setNotice(`${label} permission আপডেট হয়েছে।`);await load();}catch(err){setError(err.message)}}}/>{label}</label>)}</div></td>
                     </tr>;
                   })}
-                  {data.staff.length === 0 && <tr><td colSpan="6">কোনো Staff account পাওয়া যায়নি।</td></tr>}
+                  {data.staff.length === 0 && <tr><td colSpan="5">কোনো Staff account পাওয়া যায়নি।</td></tr>}
                 </tbody>
               </table>
             </div>
@@ -1360,6 +1389,9 @@ export function AdminOperationsPage() {
             <div className="admin-table-card"><h2>Integration Configuration Status</h2><div className="dashboard-stats"><div className="stat-card"><span>Online Payment</span><b>{integrationConfig.onlinePaymentAvailable ? "Configured" : "Not configured"}</b></div><div className="stat-card"><span>Provider</span><b>{integrationConfig.paymentProvider}</b></div><div className="stat-card"><span>Currency</span><b>{integrationConfig.currency}</b></div><div className="stat-card"><span>SMS Provider</span><b>{integrationConfig.smsProvider || "generic"}</b></div><div className="stat-card"><span>SMS</span><b>{integrationConfig.smsNotificationsEnabled ? "Configured" : "Not configured"}</b></div></div><p>Provider credentials server-এর environment variables-এ রাখতে হবে; এই UI-তে secret দেখানো বা সংরক্ষণ করা হয় না।</p></div>
             <div className="admin-table-card"><h2>Online Payment Gateway Activity</h2><p>সর্বশেষ ১০০টি online payment। `reconciliation_required` থাকলে Provider transaction যাচাই করে reconciliation করুন; এই তালিকা থেকে সরাসরি Payment সফল করা যায় না।</p><div className="dashboard-stats" style={{marginBottom:14}}>{Object.entries(onlinePayments.counts || {}).map(([status,count])=><div className="stat-card" key={status}><span>{status}</span><b>{count}</b></div>)}</div><div className="table-scroll"><table className="bookings-table"><thead><tr><th>Payment ID</th><th>Ticket</th><th>Amount</th><th>Status</th><th>Provider Ref</th><th>Created</th><th>Note</th></tr></thead><tbody>{(onlinePayments.payments || []).map(p=><tr key={p.paymentId}><td>{p.paymentId}</td><td>{p.ticketId || p.bookingId}</td><td>{p.currency} {Number(p.amount || 0).toLocaleString("en-BD")}</td><td>{p.status}</td><td>{p.providerTransactionId || "—"}</td><td>{p.createdAt ? new Date(p.createdAt).toLocaleString("bn-BD") : "—"}</td><td>{p.reconciliationReason || "—"}</td></tr>)}{!onlinePayments.payments?.length && <tr><td colSpan="7">এখনো online payment record নেই।</td></tr>}</tbody></table></div></div>
           </>
+        )}
+        {tab === "quotations" && (
+          <div className="admin-table-card"><div className="table-toolbar"><div><h2>All Quotations</h2><p>সকল Customer-এর Quotation, সংশ্লিষ্ট Booking ও সিদ্ধান্তের Status এখানে দেখা যাবে।</p></div><span>{adminQuotations.length} / {quotationPagination.total||adminQuotations.length}</span></div><div className="table-scroll"><table className="bookings-table"><thead><tr><th>Quotation</th><th>Customer / Ticket</th><th>Service</th><th>Created</th><th>Items</th><th>Total</th><th>Status</th></tr></thead><tbody>{adminQuotations.map(q=><tr key={q.quotationId}><td>{q.quotationId}</td><td><b>{q.booking?.name||"—"}</b><small style={{display:"block"}}>{q.booking?.ticketId||q.bookingId}</small><small>{q.booking?.phone||""}</small></td><td>{q.booking?.serviceName||"—"}</td><td>{q.createdAt?new Date(q.createdAt).toLocaleString("bn-BD"):"—"}</td><td>{(q.items||[]).map(i=>`${i.description} × ${i.quantity}`).join(", ")}</td><td>৳{Number(q.total||0).toLocaleString("en-BD")}</td><td>{q.status}</td></tr>)}{!adminQuotations.length&&<tr><td colSpan="7">কোনো Quotation পাওয়া যায়নি।</td></tr>}</tbody></table></div><button className="btn btn-outline" style={{marginTop:12}} onClick={load}>Refresh quotations</button></div>
         )}
         {tab === "inventory" && (
           <>
@@ -1485,6 +1517,8 @@ export function RolePermissionsPage() {
   const [roles, setRoles] = useState([]),
     [role, setRole] = useState("staff"),
     [permissions, setPermissions] = useState({}),
+    [staffUsers, setStaffUsers] = useState([]),
+    [selectedStaffId, setSelectedStaffId] = useState(""),
     [error, setError] = useState(""),
     [notice, setNotice] = useState(""),
     [busy, setBusy] = useState(false);
@@ -1512,6 +1546,31 @@ export function RolePermissionsPage() {
     "roles",
     "settings",
     "profile",
+    "bookingAttachments",
+    "bookingReschedule",
+    "invoices",
+    "receipts",
+    "warrantyClaims",
+    "complaints",
+    "completionOtp",
+    "attendance",
+    "leaveRequests",
+    "technicianSkills",
+    "serviceAreas",
+    "commissionRates",
+    "serviceReports",
+    "partsRequests",
+    "refunds",
+    "notifications",
+    "whatsappNotifications",
+    "quotationTemplates",
+    "finance",
+    "paymentReconciliation",
+    "customerDirectory",
+    "staffApproval",
+    "technicianManagement",
+    "mediaUploads",
+    "cmsBuilder",
   ];
   const actions = [
     "read",
@@ -1531,6 +1590,12 @@ export function RolePermissionsPage() {
       const d = await r.json();
       if (!r.ok) throw new Error(d.message || "Role list load failed");
       setRoles(d.roles || []);
+      const staffResponse = await fetch(`${API}/admin/staff`, { headers: { Authorization: `Bearer ${token}` } });
+      const staffData = await staffResponse.json();
+      if (!staffResponse.ok) throw new Error(staffData.message || "Staff permission list load failed");
+      const staffList = staffData.staff || [];
+      setStaffUsers(staffList);
+      setSelectedStaffId(currentId => currentId && staffList.some(u => u._id === currentId) ? currentId : (staffList[0]?._id || ""));
       const current = (d.roles || []).find((x) => x.role === role);
       setPermissions(current?.permissions || {});
       setError("");
@@ -1678,6 +1743,15 @@ export function RolePermissionsPage() {
               Reload
             </button>
           </div>
+        </div>
+        <div className="admin-table-card" style={{ padding: 24, marginTop: 20 }}>
+          <div className="table-toolbar"><div><h2>Staff Account Permissions</h2><p>Staff approval থেকে permission controls সরানো হয়েছে। Staff-এর নির্দিষ্ট অনুমতি শুধু এই Permission tab থেকেই পরিচালনা করুন।</p></div></div>
+          <label style={{ display: "grid", gap: 8, maxWidth: 460, marginBottom: 18 }}>Staff account নির্বাচন
+            <select value={selectedStaffId} onChange={e => setSelectedStaffId(e.target.value)}>
+              {staffUsers.map(member => <option key={member._id} value={member._id}>{member.name || member.email} — {member.email}</option>)}
+            </select>
+          </label>
+          {selectedStaffId ? <div className="editor-field-grid">{[["assignTechnicians","Assign technician(s)"],["manageQuotations","Create quotations"],["manageBookings","Manage bookings"],["managePayments","Manage payments & finance"],["manageInventory","Manage inventory"],["viewReports","View reports"]].map(([permission,label]) => { const member = staffUsers.find(x => x._id === selectedStaffId); return <label key={permission} style={{display:"flex",gap:10,alignItems:"center",padding:"10px 12px",border:"1px solid var(--border-color, #dbe4f0)",borderRadius:10}}><input type="checkbox" checked={(member?.permissions || []).includes(permission)} disabled={(member?.accountStatus || "pending") !== "approved"} onChange={async e => { const enabled = e.target.checked; try { const response = await fetch(`${API}/admin/staff/${selectedStaffId}/permissions`, { method:"PATCH", headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`}, body:JSON.stringify({permission,enabled}) }); const result = await response.json(); if (!response.ok) throw new Error(result.message || "Permission update failed"); setStaffUsers(list => list.map(u => u._id === selectedStaffId ? {...u, permissions: enabled ? [...new Set([...(u.permissions||[]),permission])] : (u.permissions||[]).filter(x=>x!==permission)} : u)); setNotice(`${label} permission আপডেট হয়েছে।`); } catch(err) { setError(err.message); } }}/>{label}</label>; })}</div> : <p>Staff account পাওয়া যায়নি। আগে Staff Account Approval থেকে account approve করুন।</p>}
         </div>
         <p className="admin-security-note">
           নিরাপত্তা: Admin Role Public Registration-এ পাওয়া যায় না। Staff ও

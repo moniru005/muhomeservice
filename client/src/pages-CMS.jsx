@@ -1910,6 +1910,7 @@ function CMSBookingsPanel() {
     "On the way",
     "Inspection",
     "Quotation sent",
+    "Quotation rejected",
     "Approved",
     "In progress",
     "Completed",
