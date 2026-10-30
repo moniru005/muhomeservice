@@ -11,6 +11,10 @@ import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
 import { getRolePermissions } from '../middleware/permissions.js';
 import { requireAuth } from '../middleware/auth.js';
+import rateLimit from 'express-rate-limit';
+import { persistUploadedFile } from '../services/storage.js';
+const authLimiter = rateLimit({windowMs:15*60*1000,limit:10,standardHeaders:'draft-7',legacyHeaders:false,message:{message:'অনেকবার চেষ্টা করা হয়েছে। ১৫ মিনিট পরে আবার চেষ্টা করুন।'},keyGenerator:(req)=>req.ip});
+const resetLimiter = rateLimit({windowMs:60*60*1000,limit:5,standardHeaders:'draft-7',legacyHeaders:false,message:{message:'Password reset request limit exceeded. Try again later.'}});
 const router = Router();
 const uploadsDir = fileURLToPath(new URL('../../uploads/profiles/', import.meta.url));
 fs.mkdirSync(uploadsDir, { recursive: true });
@@ -19,24 +23,24 @@ const profileUpload = multer({
  limits: { fileSize: 3 * 1024 * 1024, files: 1 },
  fileFilter: (_req, file, cb) => { if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.mimetype)) return cb(new Error('প্রোফাইল ফটো JPG, PNG অথবা WebP হতে হবে।')); cb(null, true); }
 });
-const safeUser = u => ({ id: u._id.toString(), name: u.name, email: u.email, phone: u.phone || '', role: u.role || 'customer', profilePhoto: u.profilePhoto || '' });
+const safeUser = u => ({ id: u._id.toString(), name: u.name, email: u.email, phone: u.phone || '', role: u.role || 'customer', accountStatus:u.accountStatus||'', profilePhoto: u.profilePhoto || '' });
 function issueToken(user) { return jwt.sign({ sub: user._id.toString(), email: user.email, name: user.name, role: user.role || 'customer' }, process.env.JWT_SECRET, { expiresIn: '12h' }); }
 router.post('/register', async (req, res, next) => { try {
  const name=String(req.body.name||'').trim(), email=String(req.body.email||'').trim().toLowerCase(), phone=String(req.body.phone||'').trim(), password=String(req.body.password||'');
  if(name.length<2||!/^\S+@\S+\.\S+$/.test(email)||password.length<8||!/^\+?[0-9\s()-]{8,18}$/.test(phone)) return res.status(400).json({message:'নাম, বৈধ ইমেইল, ফোন এবং কমপক্ষে ৮ অক্ষরের পাসওয়ার্ড দিন।'});
  const users=getDB().collection('users'); if(await users.findOne({email})) return res.status(409).json({message:'এই ইমেইল দিয়ে অ্যাকাউন্ট রয়েছে।'});
- const requestedRole=String(req.body.accountType||'customer').toLowerCase(); if(!['customer','technician','staff'].includes(requestedRole)) return res.status(400).json({message:'নিবন্ধনের জন্য Customer, Technician অথবা Staff Role নির্বাচন করুন।'}); const role=requestedRole; const user={name,email,phone,passwordHash:await bcrypt.hash(password,12),role,...(['technician','staff'].includes(role)?{accountStatus:'pending'}:{}),createdAt:new Date(),updatedAt:new Date()}; await users.insertOne(user); const pending=['technician','staff'].includes(role); res.status(201).json({message:pending?'নিবন্ধন গ্রহণ করা হয়েছে। Admin অনুমোদনের পর লগইন করতে পারবেন।':'অ্যাকাউন্ট তৈরি হয়েছে',...(pending?{}:{token:issueToken(user)}),user:safeUser(user)});
+ const requestedRole=String(req.body.accountType||'customer').toLowerCase(); if(!['customer','technician','staff','partner'].includes(requestedRole)) return res.status(400).json({message:'নিবন্ধনের জন্য Customer, Technician, Staff অথবা Partner Role নির্বাচন করুন।'}); const role=requestedRole; const partnerProfile = role === 'partner' ? { businessName:String(req.body.businessName||'').trim().slice(0,160), partnerType:['individual','company'].includes(req.body.partnerType)?req.body.partnerType:'individual', tradeLicense:String(req.body.tradeLicense||'').trim().slice(0,100), nid:String(req.body.nid||'').trim().slice(0,40), serviceIds:Array.isArray(req.body.serviceIds)?req.body.serviceIds.map(String).slice(0,50):[], serviceAreas:Array.isArray(req.body.serviceAreas)?req.body.serviceAreas.map(x=>String(x).trim().slice(0,80)).filter(Boolean).slice(0,30):[], payoutDetails:{method:['bkash','bank'].includes(req.body.payoutMethod)?req.body.payoutMethod:'bkash',accountName:String(req.body.payoutAccountName||'').trim().slice(0,100),accountNumber:String(req.body.payoutAccountNumber||'').trim().slice(0,80)},partnerTermsAcceptedAt:req.body.acceptPartnerTerms===true?new Date():null } : {}; if(role==='partner'&&(!partnerProfile.businessName||(!partnerProfile.tradeLicense&&!partnerProfile.nid)||!partnerProfile.serviceIds.length||!partnerProfile.serviceAreas.length||!partnerProfile.partnerTermsAcceptedAt)) return res.status(400).json({message:'Partner business name, services, service areas এবং Partner Terms গ্রহণ আবশ্যক।'}); const user={name,email,phone,passwordHash:await bcrypt.hash(password,12),role,...(['technician','staff','partner'].includes(role)?{accountStatus:'pending'}:{}),...(role==='partner'?{partnerProfile}:{}),createdAt:new Date(),updatedAt:new Date()}; await users.insertOne(user); const pending=['technician','staff','partner'].includes(role); res.status(201).json({message:pending?'নিবন্ধন গ্রহণ করা হয়েছে। Admin অনুমোদনের পর লগইন করতে পারবেন।':'অ্যাকাউন্ট তৈরি হয়েছে',...(pending?{}:{token:issueToken(user)}),user:safeUser(user)});
  } catch(e){ if(e.code===11000)return res.status(409).json({message:'এই ইমেইল দিয়ে অ্যাকাউন্ট রয়েছে।'}); next(e); }});
-router.post('/login', async (req, res, next) => { try {
+router.post('/login', authLimiter, async (req, res, next) => { try {
  const email=String(req.body.email||'').trim().toLowerCase(), password=String(req.body.password||''); if(!email||!password)return res.status(400).json({message:'Email and password are required'});
  let user=await getDB().collection('users').findOne({email});
- if(user && await bcrypt.compare(password,user.passwordHash)) { if(['staff','technician'].includes(user.role) && (user.role === 'technician' ? (user.technicianStatus || user.accountStatus) : user.accountStatus) !== 'approved') return res.status(403).json({message:'আপনার অ্যাকাউন্টটি Admin অনুমোদনের অপেক্ষায় আছে।'}); return res.json({token:issueToken(user),user:safeUser(user),admin:user.role==='admin'?{name:user.name,email:user.email}:undefined}); }
+ if(user && await bcrypt.compare(password,user.passwordHash)) { if(['staff','technician','partner','partner-technician'].includes(user.role) && (user.role === 'technician' ? (user.technicianStatus || user.accountStatus) : user.accountStatus) !== 'approved') return res.status(403).json({message:'আপনার অ্যাকাউন্টটি Admin অনুমোদনের অপেক্ষায় আছে।'}); return res.json({token:issueToken(user),user:safeUser(user),admin:user.role==='admin'?{name:user.name,email:user.email}:undefined}); }
  const admin=await getDB().collection('admins').findOne({email}); if(admin && await bcrypt.compare(password,admin.passwordHash)){const a={...admin,role:'admin'};return res.json({token:issueToken(a),user:{id:admin._id.toString(),name:admin.name,email:admin.email,phone:'',role:'admin'},admin:{name:admin.name,email:admin.email}})}
  return res.status(401).json({message:'ইমেইল অথবা পাসওয়ার্ড সঠিক নয়।'});
  } catch(e){next(e)} });
 
 // Password recovery: store only a SHA-256 hash of the single-use token.
-router.post('/forgot-password', async (req, res, next) => {
+router.post('/forgot-password', resetLimiter, async (req, res, next) => {
  try {
   const email = String(req.body.email || '').trim().toLowerCase();
   if (!/^\S+@\S+\.\S+$/.test(email)) return res.status(400).json({ message: 'একটি বৈধ ইমেইল ঠিকানা দিন।' });
@@ -67,7 +71,7 @@ router.post('/forgot-password', async (req, res, next) => {
  } catch (e) { next(e); }
 });
 
-router.post('/reset-password', async (req, res, next) => {
+router.post('/reset-password', resetLimiter, async (req, res, next) => {
  try {
   const token = String(req.body.token || '').trim();
   const password = String(req.body.password || '');
@@ -119,7 +123,7 @@ router.put('/me', requireAuth, (req,res,next)=>profileUpload.single('profilePhot
   if(name.length < 2 || name.length > 100) { if(req.file) fs.unlink(req.file.path,()=>{}); return res.status(400).json({message:'নাম ২ থেকে ১০০ অক্ষরের মধ্যে দিন।'}); }
   if(phone && !/^\+?[0-9\s()-]{8,18}$/.test(phone)) { if(req.file) fs.unlink(req.file.path,()=>{}); return res.status(400).json({message:'সঠিক ফোন নম্বর দিন।'}); }
   const update = {name, phone, updatedAt:new Date()};
-  if(req.file) update.profilePhoto = `/uploads/profiles/${req.file.filename}`;
+  if(req.file) { const stored = await persistUploadedFile(req.file,{folder:'mu-home-service/profiles',resourceType:'image'}); update.profilePhoto = stored.url || `/uploads/profiles/${req.file.filename}`; }
   await accounts.updateOne({_id:accountId},{$set:update});
   if(req.file && current.profilePhoto && current.profilePhoto.startsWith('/uploads/profiles/')) { const oldPath=path.join(uploadsDir,path.basename(current.profilePhoto)); if(oldPath!==req.file.path) fs.unlink(oldPath,()=>{}); }
   const updated = {...current,...update};

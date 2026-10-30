@@ -13,6 +13,7 @@ import roleRoutes from "./routes/roles.js";
 import operationsRoutes from "./routes/operations.js";
 import paymentRoutes from "./routes/payments.js";
 import roleEnhancementRoutes from "./routes/role-enhancements.js";
+import partnerRoutes from "./routes/partners.js";
 import { notifySmsSafely } from "./services/integrations.js";
 import { requireAdmin, requireAuth } from "./middleware/auth.js";
 import { getRolePermissions } from "./middleware/permissions.js";
@@ -23,6 +24,21 @@ import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 
 const app = express();
+// Record mutating Admin actions after route authentication has populated req.user.
+// Request bodies are deliberately excluded to avoid storing passwords, tokens or personal documents.
+app.use((req, res, next) => {
+  res.on('finish', () => {
+    if (req.user?.role !== 'admin' || !['POST','PUT','PATCH','DELETE'].includes(req.method)) return;
+    const path = req.originalUrl.split('?')[0];
+    if (!path.startsWith('/api/')) return;
+    getDB().collection('adminAuditLogs').insertOne({
+      action: `${req.method.toLowerCase()} ${path}`.slice(0,240), actorId: req.user.sub,
+      actorRole: 'admin', method: req.method, path, statusCode: res.statusCode,
+      ip: req.ip, userAgent: String(req.get('user-agent') || '').slice(0,300), createdAt: new Date()
+    }).catch(err => console.error('Admin audit log write failed:', err.message));
+  });
+  next();
+});
 function requireAdminOrStaffPermission(permission) {
   return (req, res, next) => requireAuth(req, res, async () => {
     try {
@@ -41,6 +57,8 @@ function requireAdminOrStaffPermission(permission) {
   });
 }
 app.disable("x-powered-by");
+// Render terminates TLS at its proxy; trust exactly the first proxy hop for client IPs.
+app.set("trust proxy", 1);
 app.use(helmet());
 app.use(
   cors({
@@ -70,8 +88,15 @@ const profileStaticOptions = {
   fallthrough: true,
   setHeaders: (res) => res.setHeader("Cache-Control", "public, max-age=3600"),
 };
-app.use("api/uploads", express.static(uploadsRoot, profileStaticOptions));
-app.use("/api/uploads", express.static(uploadsRoot, profileStaticOptions));
+// Only explicitly public asset directories are exposed. Partner documents and
+// all other private uploads remain accessible through authenticated routes only.
+for (const publicDir of ["profiles", "service-reports", "cms", "services"]) {
+  const dir = path.join(uploadsRoot, publicDir);
+  if (fs.existsSync(dir)) app.use(`/api/uploads/${publicDir}`, express.static(dir, profileStaticOptions));
+}
+// Legacy CMS media URLs use /api/uploads; expose only the CMS media directory there.
+const cmsMediaDir = path.join(uploadsRoot, "cms");
+if (fs.existsSync(cmsMediaDir)) app.use("/api/uploads", express.static(cmsMediaDir, profileStaticOptions));
 app.get("/api/health", (_req, res) =>
   res.json({ status: "ok", service: "MU Home Service API" }),
 );
@@ -228,6 +253,7 @@ app.get("/api/dashboard/summary", async (req, res, next) => {
           const canReadQueue = (rolePerms.bookings || []).some(a => ["*", "read", "update", "assign", "status"].includes(a)) || (rolePerms.quotations || []).some(a => ["*", "read", "create"].includes(a));
           filter = canReadQueue ? {} : { _id: { $exists: false } };
         } else filter = { userId: req.user.sub };
+        filter = { ...filter, deletedAt: { $exists: false } };
         const [total, completed, bookings] = await Promise.all([
           db.collection("bookings").countDocuments(filter),
           db
@@ -611,6 +637,11 @@ app.get(
           paymentStatus: 1,
           paymentAmount: 1,
           payments: 1,
+          totalAmount: 1,
+          quotedAmount: 1,
+          partnerId: 1,
+          partnerStatus: 1,
+          partnerPayout: 1,
         })
         .toArray();
       res.json({
@@ -1213,7 +1244,6 @@ app.get(
 );
 
 app.use("/api/admin", cmsRoutes);
-app.use("/api", cmsRoutes);
 app.use("/api/auth", authRoutes);
 app.use("/api", roleRoutes);
 app.use("/api", bookingRoutes);
@@ -1221,6 +1251,7 @@ app.use("/api", contactRoutes);
 app.use("/api", operationsRoutes);
 app.use("/api", paymentRoutes);
 app.use("/api", roleEnhancementRoutes);
+app.use("/api", partnerRoutes);
 app.use((req, res) =>
   res.status(404).json({ message: `Not found: ${req.method} ${req.path}` }),
 );
@@ -1234,6 +1265,7 @@ app.use((err, _req, res, _next) => {
   });
 });
 const port = Number(process.env.PORT || 5000);
+if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) { console.error("JWT_SECRET must be configured with at least 32 characters."); process.exit(1); }
 try {
   await connectDB();
   app.listen(port, () =>

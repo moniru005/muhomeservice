@@ -47,6 +47,8 @@ import CMSPage, { PublicCMSPage } from "./pages-CMS.jsx";
 import OperationsWorkspace from "./components/operations-workspace.jsx";
 import CustomerQuotations from "./components/customer-quotations.jsx";
 import BusinessControl from "./components/business-control.jsx";
+import { PartnerWorkspace, PartnerRegistration, PartnerTechnicianWorkspace } from "./components/partner-workspace.jsx";
+import PartnerVerification from "./components/partner-verification.jsx";
 
 const API = (
   import.meta.env.VITE_API_URL || "http://localhost:5000/api"
@@ -77,7 +79,7 @@ import {
 
 function RoutedApp() {
   const location = useLocation();
-  const isAdminArea = location.pathname.startsWith("/admin");
+  const isAdminArea = location.pathname.startsWith("/admin") || location.pathname.startsWith("/partner");
   const { services, packages } = useSiteContent(
     API,
     fallbackServices,
@@ -113,6 +115,10 @@ function RoutedApp() {
           path="/technician/register"
           element={<AccountPage mode="technician" />}
         />
+        <Route path="/partner/register" element={<PartnerRegistration />} />
+        <Route path="/partner/verify/:token" element={<PartnerVerification />} />
+        <Route path="/partner/dashboard" element={<PartnerWorkspace />} />
+        <Route path="/partner-technician/dashboard" element={<PartnerTechnicianWorkspace />} />
         <Route path="/profile" element={<ProfilePage />} />
         <Route path="/dashboard" element={<UserDashboard />} />
         <Route path="/technician/dashboard" element={<UserDashboard mode="technician" />} />

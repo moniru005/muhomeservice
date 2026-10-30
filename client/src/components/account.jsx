@@ -89,6 +89,8 @@ export function AccountPage({ mode }) {
         nav("/admin");
       } else if ((d.user || d.admin)?.role === "technician")
         nav("/technician/dashboard");
+      else if (["partner", "partner-technician"].includes((d.user || d.admin)?.role))
+        nav("/partner/dashboard");
       else nav("/dashboard");
     } catch (e) {
       setError(
@@ -198,6 +200,7 @@ export function AccountPage({ mode }) {
             {register ? "লগইন করুন" : "রেজিস্টার করুন"}
           </Link>
         </p>
+        {register && <p className="account-switch">আপনি কি সার্ভিস পার্টনার? <Link to="/partner/register">Partner হিসেবে আবেদন করুন</Link></p>}
         <Link to="/" className="back-home">
           ← ওয়েবসাইটে ফিরে যান
         </Link>
@@ -330,6 +333,7 @@ export function PasswordRecoveryPage({ reset = false }) {
         <p className="account-switch">
           <Link to="/login">লগইন পেজে ফিরে যান</Link>
         </p>
+        {register && <p className="account-switch">আপনি কি সার্ভিস পার্টনার? <Link to="/partner/register">Partner হিসেবে আবেদন করুন</Link></p>}
         <Link to="/" className="back-home">
           ← ওয়েবসাইটে ফিরে যান
         </Link>
@@ -348,6 +352,7 @@ export function UserDashboard({ mode = "auto" }) {
   const [selectedTechnicians, setSelectedTechnicians] = useState({});
   const [assigning, setAssigning] = useState("");
   const [notice, setNotice] = useState("");
+  const [customerNotifications, setCustomerNotifications] = useState([]);
   const [paymentsData, setPaymentsData] = useState({ payments: [], bookings: [] });
   const [integrationStatus, setIntegrationStatus] = useState({ onlinePaymentAvailable: false, smsNotificationsEnabled: false });
   const [checkoutBusy, setCheckoutBusy] = useState("");
@@ -388,13 +393,15 @@ export function UserDashboard({ mode = "auto" }) {
         if (!r.ok) throw new Error(d.message);
         setData(d);
         if (d.role === "customer") {
-          const [pr, fr, ir] = await Promise.all([
+          const [pr, fr, ir, nr] = await Promise.all([
             fetch(`${API}/customer/payments`, { headers: { Authorization: `Bearer ${token}` } }),
             fetch(`${API}/customer/bookings`, { headers: { Authorization: `Bearer ${token}` } }),
             fetch(`${API}/integrations/status`, { headers: { Authorization: `Bearer ${token}` } }),
+            fetch(`${API}/notifications`, { headers: { Authorization: `Bearer ${token}` } }),
           ]);
           if (pr.ok) setPaymentsData(await pr.json());
           if (ir.ok) setIntegrationStatus(await ir.json());
+          if (nr.ok) { const nd = await nr.json(); setCustomerNotifications((nd.notifications || []).filter(n => n.type === "partner-completion-otp")); }
           if (fr.ok) { const fd = await fr.json(); setData(old => old ? { ...old, bookings: fd.bookings } : old); }
         }
         if (d.role === "technician") {
@@ -514,6 +521,7 @@ export function UserDashboard({ mode = "auto" }) {
           </div>
         </div>
         {notice && <div className="alert success">{notice}</div>}
+        {user?.role === "customer" && customerNotifications.length > 0 && <section className="dashboard-card" style={{marginBottom:20}}><h2>কাজ সম্পন্নের OTP / Notifications</h2>{customerNotifications.map(n => <article key={n._id} style={{padding:"12px 0",borderBottom:"1px solid #e5e7eb"}}><b>{n.title}</b><p>{n.message}</p><small>{new Date(n.createdAt).toLocaleString()}</small></article>)}</section>}
         {error && (
           <div className="alert error">
             {error} <Link to="/login">লগইন</Link>
@@ -573,7 +581,7 @@ export function UserDashboard({ mode = "auto" }) {
                           <td>
                             {new Date(b.createdAt).toLocaleDateString("bn-BD")}
                           </td>
-                          <td>{b.status}</td>
+                          <td>{b.status}{user?.role === "customer" && b.partnerVerification && <div className="customer-partner-verification"><b>{b.partnerVerification.businessName}</b><span className={b.partnerVerification.status === "ACTIVE" ? "verified" : "not-verified"}>{b.partnerVerification.status === "ACTIVE" ? "✓ Verified Partner" : "Partner status: " + b.partnerVerification.status}</span>{b.partnerVerification.verificationUrl && <a href={b.partnerVerification.verificationUrl} target="_blank" rel="noreferrer">পরিচয় যাচাই করুন</a>}</div>}</td>
                           {data.canAssign && <td className="account-assignment-cell">
                             <div className="account-assignment-controls">
                             <select className="technician-multi-select" multiple value={selectedTechnicians[b._id] || b.technicianIds || (b.technicianId ? [b.technicianId] : [])} onChange={(e) => setSelectedTechnicians((old) => ({ ...old, [b._id]: Array.from(e.target.selectedOptions, (o) => o.value) }))} aria-label="Technician নির্বাচন করুন" style={{ minHeight: 76 }}>

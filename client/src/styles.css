@@ -8,7 +8,7 @@
 @media(max-width:390px){.services-grid{grid-template-columns:1fr}.service-card>p{min-height:0}.service-card ul{margin:10px 0}.form-grid{grid-template-columns:1fr}.full-field{grid-column:auto}.booking-aside{grid-template-columns:1fr}.aside-note{grid-column:auto}.hero h1{font-size:33px}.hero-image-frame{height:300px}.floating-card{min-width:175px}.float-card-top{left:-6px}.float-card-bottom{right:-7px}.hero-bottom{grid-template-columns:1fr}.hero-bottom span:last-child{grid-column:auto}}
 
 /* MU Home Service: Bengali typography, accounts, CMS and technician uniform */
-@font-face{font-family:'SolaimanLipi';src:local('SolaimanLipi'),url('/fonts/SolaimanLipi.ttf') format('truetype');font-display:swap;font-weight:100 900}
+/* Use locally installed SolaimanLipi when available; otherwise fall back without requesting a missing font file. */
 :root{font-family:'SolaimanLipi','Noto Sans Bengali','Hind Siliguri',sans-serif}
 body,button,input,select,textarea{font-family:'SolaimanLipi','Noto Sans Bengali','Hind Siliguri',sans-serif}
 .nav-account{font-size:13px;font-weight:700;color:var(--navy);white-space:nowrap}.nav-account:hover{color:var(--green)}
@@ -503,3 +503,74 @@ button,a,input,select,textarea{transition:background-color .18s ease,border-colo
 .user-dashboard .customer-feedback-panel textarea { width: 100%; min-height: 72px; resize: vertical; border: 1px solid #dce5f1; border-radius: 9px; padding: 10px 12px; background: #fff; font: inherit; font-size: 12px; }
 .user-dashboard .customer-feedback-panel .btn { justify-self: start; }
 @media (max-width: 760px) { .user-dashboard .customer-history-actions-cell { min-width: 190px; } .user-dashboard .customer-history-actions-panel { padding: 9px; } .user-dashboard .customer-action-buttons { gap: 6px; } }
+/* Partner management workspace */
+.partner-admin-list{display:grid;gap:12px;padding:16px}.partner-admin-card{border:1px solid #dce6f3;border-radius:14px;padding:16px;background:linear-gradient(135deg,#fff,#fbfdff)}.partner-admin-head{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:14px}.partner-admin-head>div{display:grid;gap:5px}.partner-admin-head b{color:#203b67}.partner-admin-head small,.partner-admin-meta{color:#78869d;font-size:12px}.partner-admin-fields{display:grid;grid-template-columns:repeat(3,minmax(0,1fr)) auto;gap:10px;align-items:end}.partner-admin-fields label{display:grid;gap:6px;color:#65748d;font-size:12px}.partner-admin-fields input{min-width:0;width:100%;padding:10px;border:1px solid #d7e1ef;border-radius:9px}.partner-admin-meta{display:block;margin-top:12px}@media(max-width:900px){.partner-admin-fields{grid-template-columns:1fr 1fr}.partner-admin-fields button{grid-column:1/-1}}@media(max-width:560px){.partner-admin-head{align-items:flex-start;flex-direction:column}.partner-admin-fields{grid-template-columns:1fr}}
+
+.customer-partner-verification{display:grid;gap:4px;margin-top:7px;min-width:130px}.customer-partner-verification b{font-size:12px;color:#334155}.customer-partner-verification span{font-size:11px;font-weight:800}.customer-partner-verification .verified{color:#15803d}.customer-partner-verification .not-verified{color:#b45309}.customer-partner-verification a{font-size:11px;color:#1d4ed8;font-weight:800;text-decoration:underline}
+
+/* MU Home Service UI polish: complete booking status palette */
+.status-select[class*="status-"], .status-pill[class*="status-"] {
+  border-width: 1px; border-style: solid; font-weight: 700;
+}
+.status-select.status-new, .status-pill.status-new { background:#fff7df; border-color:#f2d58b; color:#946200; }
+.status-select.status-contacted, .status-pill.status-contacted { background:#eaf4ff; border-color:#b9d8fa; color:#245d9b; }
+.status-select.status-assigned, .status-pill.status-assigned { background:#f0eaff; border-color:#d5c5fa; color:#6541a5; }
+.status-select.status-on-the-way, .status-pill.status-on-the-way { background:#e6f7ff; border-color:#a9def3; color:#126487; }
+.status-select.status-inspection, .status-pill.status-inspection { background:#e8f7f4; border-color:#b6e5d9; color:#176d5c; }
+.status-select.status-quotation-sent, .status-pill.status-quotation-sent { background:#fff0df; border-color:#f5d0a5; color:#99520c; }
+.status-select.status-quotation-rejected, .status-pill.status-quotation-rejected { background:#fff0f0; border-color:#f3c2c2; color:#a52e38; }
+.status-select.status-approved, .status-pill.status-approved { background:#eaf8e9; border-color:#bfe3bc; color:#286b32; }
+.status-select.status-in-progress, .status-pill.status-in-progress { background:#e9f0ff; border-color:#c1d2fb; color:#3159a5; }
+.status-select.status-completed, .status-pill.status-completed { background:#eaf7e2; border-color:#cde5ba; color:#47752a; }
+.status-select.status-cancelled, .status-pill.status-cancelled { background:#fff0ee; border-color:#f3d1cd; color:#a33b32; }
+.status-select { min-height:36px; cursor:pointer; transition:background .15s,border-color .15s,box-shadow .15s; }
+.status-select:focus-visible { outline:0; box-shadow:0 0 0 3px #719d4930; }
+.status-pill { border:1px solid #dce5ed; padding:5px 10px; border-radius:999px; font-size:11px; line-height:1.35; }
+
+/* Previously unstyled shared sections and loading feedback */
+.hero-copy { min-width:0; position:relative; z-index:1; }
+.section-services { position:relative; overflow:hidden; background:linear-gradient(180deg,#fff 0%,#f7faf5 100%); }
+.loading-state { display:flex; align-items:center; justify-content:center; gap:12px; min-height:180px; padding:28px 18px; color:#52647a; background:linear-gradient(135deg,#f8fbff,#f2f7f4); border:1px solid #e1eaf0; border-radius:16px; font-size:13px; font-weight:700; text-align:center; }
+.loading-state:before { content:""; width:19px; height:19px; flex:0 0 19px; border:3px solid #dce8d2; border-top-color:#6d9d42; border-radius:50%; animation:mu-loading-spin .8s linear infinite; }
+@keyframes mu-loading-spin { to { transform:rotate(360deg); } }
+
+/* Business-control audit/report content */
+.bc-report-content { min-width:0; display:grid; gap:18px; }
+.bc-audit-table { min-width:850px; }
+.bc-audit-table th,.bc-audit-table td { white-space:normal; overflow-wrap:anywhere; }
+.bc-audit-table .bc-details-cell { min-width:190px; max-width:360px; font:11px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace; }
+.bc-audit-table td small { display:block; margin-top:4px; color:#8794a5; overflow-wrap:anywhere; }
+.bc-report-content .bc-filter { display:flex; align-items:end; flex-wrap:wrap; gap:12px; }
+.bc-report-content .bc-filter label { display:grid; gap:6px; min-width:145px; color:#52647a; font-size:12px; font-weight:700; }
+.bc-report-content .bc-filter input { max-width:100%; min-height:38px; padding:8px 10px; border:1px solid #dce5ed; border-radius:9px; background:#fff; color:#24364c; }
+
+/* Pro page-builder workspace: safe sizing and readable canvas */
+.pro-builder-main { min-width:0; width:100%; display:grid; grid-template-columns:minmax(0,1fr); gap:18px; align-content:start; }
+.pro-builder-main > * { min-width:0; }
+.pro-builder-main iframe,.pro-builder-main canvas,.pro-builder-main img { max-width:100%; }
+.pro-builder-main input,.pro-builder-main select,.pro-builder-main textarea { max-width:100%; }
+
+/* Prevent inline-sized admin tables/forms from forcing the viewport wider */
+.admin-page,.admin-content,.admin-table-card,.admin-table-card form,.bc-report-content,.bc-panel,.bc-table-wrap { min-width:0; }
+.admin-table-card { max-width:100%; }
+.admin-table-card table,.bc-table-wrap table { max-width:100%; }
+.table-scroll,.bc-table-wrap { display:block; width:100%; max-width:100%; overflow-x:auto; overscroll-behavior-x:contain; -webkit-overflow-scrolling:touch; }
+.table-scroll table,.bc-table-wrap table { width:max-content; min-width:100%; }
+.admin-table-card input,.admin-table-card select,.admin-table-card textarea { max-width:100%; }
+.admin-table-card button,.table-toolbar button { flex-shrink:0; }
+@media(max-width:760px) {
+  .admin-content { overflow-x:hidden; }
+  .admin-table-card { border-radius:13px; }
+  .table-toolbar { min-width:0; }
+  .table-filters { min-width:0; }
+  .table-filters > * { min-width:0; max-width:100%; }
+  .bc-report-content .bc-filter { align-items:stretch; }
+  .bc-report-content .bc-filter label { flex:1 1 135px; }
+  .bc-report-content .bc-filter button { flex:1 1 auto; }
+  .bc-audit-table { min-width:780px; }
+  .pro-builder-main { overflow-x:hidden; }
+}
+@media(max-width:420px) {
+  .status-select { max-width:100%; font-size:11px; }
+  .loading-state { min-height:135px; padding:20px 12px; font-size:12px; }
+}

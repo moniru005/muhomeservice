@@ -4,6 +4,7 @@ import { ObjectId } from "mongodb";
 import { getDB } from "../db.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import { requirePermission, getRolePermissions } from "../middleware/permissions.js";
+import { persistUploadedFile } from "../services/storage.js";
 const router = Router();
 const db = () => getDB();
 const oid = (id) => (ObjectId.isValid(id) ? new ObjectId(id) : null);
@@ -420,13 +421,13 @@ import { fileURLToPath } from "node:url";
 const evidenceDir = fileURLToPath(new URL("../../uploads/service-reports/", import.meta.url));
 fs.mkdirSync(evidenceDir, { recursive:true });
 const evidenceUpload = multer({ storage:multer.diskStorage({ destination:(_req,_file,cb)=>cb(null,evidenceDir), filename:(req,file,cb)=>cb(null, `${req.user.sub}-${Date.now()}-${randomUUID().slice(0,8)}${path.extname(file.originalname).toLowerCase()}`) }), limits:{fileSize:5*1024*1024, files:5}, fileFilter:(_req,file,cb)=>cb(null,["image/jpeg","image/png","image/webp"].includes(file.mimetype)) });
-router.post("/operations/bookings/:id/photos", requireAuth, requireRole("technician","staff","admin"), evidenceUpload.array("photos",5), async(req,res,next)=>{try{if(!ObjectId.isValid(req.params.id))return res.status(400).json({message:"Invalid booking ID"});const b=await db().collection("bookings").findOne({_id:new ObjectId(req.params.id)});if(!(await canSeeBooking(req,b)))return res.status(404).json({message:"Booking not found or access denied"});if(req.user.role==="staff"){const staff=await approvedUser(req);const rp=await getRolePermissions("staff");if(!staff||(!((staff.permissions||[]).includes("manageBookings"))&&!((rp.bookings||[]).some(a=>["*","update"].includes(a)))))return res.status(403).json({message:"Report photo upload permission required"})}if(req.user.role==="technician"&&!(b.technicianIds||[]).includes(req.user.sub)&&b.technicianId!==req.user.sub)return res.status(403).json({message:"এই কাজটি আপনার নামে assign করা নেই।"});const photos=(req.files||[]).map(f=>({url:`/api/uploads/service-reports/${f.filename}`,name:f.originalname,mimeType:f.mimetype,size:f.size,uploadedAt:new Date(),uploadedBy:req.user.sub}));if(!photos.length)return res.status(400).json({message:"কমপক্ষে একটি ছবি নির্বাচন করুন।"});await db().collection("bookings").updateOne({_id:b._id},{$push:{workPhotos:{$each:photos}},$set:{updatedAt:new Date()}});res.status(201).json({message:"Report evidence photos uploaded",photos})}catch(e){next(e)}});
+router.post("/operations/bookings/:id/photos", requireAuth, requireRole("technician","staff","admin"), evidenceUpload.array("photos",5), async(req,res,next)=>{try{if(!ObjectId.isValid(req.params.id))return res.status(400).json({message:"Invalid booking ID"});const b=await db().collection("bookings").findOne({_id:new ObjectId(req.params.id)});if(!(await canSeeBooking(req,b)))return res.status(404).json({message:"Booking not found or access denied"});if(req.user.role==="staff"){const staff=await approvedUser(req);const rp=await getRolePermissions("staff");if(!staff||(!((staff.permissions||[]).includes("manageBookings"))&&!((rp.bookings||[]).some(a=>["*","update"].includes(a)))))return res.status(403).json({message:"Report photo upload permission required"})}if(req.user.role==="technician"&&!(b.technicianIds||[]).includes(req.user.sub)&&b.technicianId!==req.user.sub)return res.status(403).json({message:"এই কাজটি আপনার নামে assign করা নেই।"});const photos=await Promise.all((req.files||[]).map(async f=>{const stored=await persistUploadedFile(f,{folder:"mu-home-service/service-reports",resourceType:"image"});return {url:stored.url||`/api/uploads/service-reports/${f.filename}`,storageProvider:stored.provider,storagePublicId:stored.publicId,name:f.originalname,mimeType:f.mimetype,size:f.size,uploadedAt:new Date(),uploadedBy:req.user.sub};}));if(!photos.length)return res.status(400).json({message:"কমপক্ষে একটি ছবি নির্বাচন করুন।"});await db().collection("bookings").updateOne({_id:b._id},{$push:{workPhotos:{$each:photos}},$set:{updatedAt:new Date()}});res.status(201).json({message:"Report evidence photos uploaded",photos})}catch(e){next(e)}});
 router.post("/technician/bookings/:id/photos", requireAuth, requireRole("technician"), evidenceUpload.array("photos",5), async (req,res,next)=>{
   try {
     if (!ObjectId.isValid(req.params.id)) return res.status(400).json({message:"Invalid booking ID"});
     const b = await db().collection("bookings").findOne({_id:new ObjectId(req.params.id),$or:[{technicianId:req.user.sub},{technicianIds:req.user.sub}]});
     if (!b) return res.status(404).json({message:"Booking not found or not assigned to you"});
-    const files = (req.files||[]).map(f=>({url:`/api/uploads/service-reports/${f.filename}`,name:f.originalname,mimeType:f.mimetype,size:f.size,uploadedAt:new Date(),uploadedBy:req.user.sub}));
+    const files = await Promise.all((req.files||[]).map(async f=>{const stored=await persistUploadedFile(f,{folder:"mu-home-service/service-reports",resourceType:"image"});return {url:stored.url||`/api/uploads/service-reports/${f.filename}`,storageProvider:stored.provider,storagePublicId:stored.publicId,name:f.originalname,mimeType:f.mimetype,size:f.size,uploadedAt:new Date(),uploadedBy:req.user.sub};}));
     await db().collection("bookings").updateOne({_id:b._id},{$push:{workPhotos:{$each:files}},$set:{updatedAt:new Date()}});
     res.status(201).json({message:"Work photos uploaded",photos:files});
   } catch(e){next(e);}
@@ -806,7 +807,7 @@ router.get("/notifications", requireAuth, async (req, res, next) => {
         ? ["admin", "staff", "technician", "all"]
         : [req.user.role, "all"];
     const filter = {
-      $or: [{ recipientId: userId }, { recipientRole: { $in: roles } }],
+      $or: [{ recipientId: userId }, { recipientId: { $exists: false }, recipientRole: { $in: roles } }],
     };
     const notifications = await db()
       .collection("notifications")
@@ -838,7 +839,7 @@ router.patch("/notifications/:id/read", requireAuth, async (req, res, next) => {
           _id: id,
           $or: [
             { recipientId: String(req.user.sub) },
-            { recipientRole: { $in: roles } },
+            { recipientId: { $exists: false }, recipientRole: { $in: roles } },
           ],
         },
         { $set: { read: true, readAt: new Date() } },

@@ -189,3 +189,7 @@ The current integration package includes a bKash Tokenized Checkout adapter (san
 ### Role workflow fixes (29 Oct 2026)
 
 Latest role fixes add booking-form photo upload, customer reschedule requests, a new-quotation request after rejection, readable invoice/receipt dialogs, direct Service Report photo uploads, searchable paginated Customer Directory, and an Admin Quotation screen. Staff permission toggles now accept `managePayments` and `viewReports`, and protected finance/report/quotation/booking operations honor these individual grants alongside role-level permissions. Booking deletion remains an archive to preserve financial relationships. See `ROLE-ENHANCEMENTS-2026-10.md` for details and verification limits.
+
+## Third-party Partner fulfilment
+
+See `PARTNER-ECOSYSTEM-IMPLEMENTATION.md` for the new Partner role, approval, service fulfilment configuration, privacy-safe dispatch/acceptance flow, partner payout ledger, API endpoints, and deployment cautions. Partner registration is pending Admin approval and requires Partner Terms acceptance. The Partner API is implemented; dedicated polished Partner/Admin management screens and partner-technician team invitations remain follow-up UI work.

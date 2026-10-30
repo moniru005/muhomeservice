@@ -4,7 +4,7 @@ import { DEFAULT_ROLE_PERMISSIONS, getRolePermissions } from '../middleware/perm
 import { getDB } from '../db.js';
 
 const router = Router();
-const BUILT_IN_ROLES = ['admin', 'staff', 'technician', 'customer'];
+const BUILT_IN_ROLES = ['admin', 'staff', 'technician', 'partner', 'partner-technician', 'customer'];
 const VALID_ACTIONS = new Set(['read', 'create', 'update', 'delete', 'assign', 'status', 'publish', '*']);
 
 router.get('/permissions/me', requireAuth, async (req, res, next) => {

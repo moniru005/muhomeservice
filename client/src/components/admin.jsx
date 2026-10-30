@@ -852,7 +852,7 @@ export function TicketTrackingPage() {
             </p>
             <p>
               <b>বর্তমান স্ট্যাটাস:</b>{" "}
-              <span className="status-pill">{booking.status}</span>
+              <span className={`status-pill status-${String(booking.status || "").toLowerCase().replaceAll(" ", "-")}`}>{booking.status}</span>
             </p>
             <p>
               <b>বুকিং:</b>{" "}
@@ -908,6 +908,20 @@ export function AdminOperationsPage() {
   const [integrationConfig, setIntegrationConfig] = useState({ onlinePaymentAvailable: false, smsNotificationsEnabled: false, paymentProvider: "bkash", currency: "BDT", smsProvider: "mimsms" });
   const [serviceReports, setServiceReports] = useState([]);
   const [partsRequests, setPartsRequests] = useState([]);
+  const [partners, setPartners] = useState([]);
+  const [approvedPartners, setApprovedPartners] = useState([]);
+  const [partnerDocuments, setPartnerDocuments] = useState([]);
+  const [partnerFilter, setPartnerFilter] = useState("pending");
+  const [partnerEdits, setPartnerEdits] = useState({});
+  const [partnerQuality, setPartnerQuality] = useState({ partners: [], claims: [] });
+  const [partnerSettlements, setPartnerSettlements] = useState([]);
+  const [leaveRequests, setLeaveRequests] = useState([]);
+  const [auditLogs, setAuditLogs] = useState([]);
+  const [manualCompletion, setManualCompletion] = useState({ bookingId: "", reason: "" });
+  const [partnerDispatch, setPartnerDispatch] = useState({ bookingId: "", partnerId: "" });
+  const [serviceFulfilment, setServiceFulfilment] = useState({ serviceId: "", fulfilment: "inhouse", partnerIds: "" });
+  const [settlementEdits, setSettlementEdits] = useState({});
+  const [payoutAmountEdits, setPayoutAmountEdits] = useState({});
   const [payment, setPayment] = useState({ bookingId: "", amount: "", method: "cash", reference: "" });
   const [movementItemId, setMovementItemId] = useState("");
   const [movement, setMovement] = useState({ type: "out", quantity: "1", unitCost: "0", bookingId: "", note: "" });
@@ -928,14 +942,23 @@ export function AdminOperationsPage() {
   async function load() {
     setError("");
     try {
-      const [f, i, t, st, summary, bookingResult, reportResult, partsResult, onlinePaymentResult, integrationResult] = await Promise.all([
+      const [f, i, t, st, summary, bookingResult, reportResult, partsResult, onlinePaymentResult, integrationResult, partnerResult] = await Promise.all([
         request("/admin/finance"), request("/admin/inventory"), request("/admin/technicians"), request("/admin/staff"),
         request("/admin/operations/summary"), request("/admin/operations/bookings"),
-        request("/operations/service-reports"), request("/operations/parts-requests"), request("/admin/online-payments"), request("/admin/integrations/status"),
+        request("/operations/service-reports"), request("/operations/parts-requests"), request("/admin/online-payments"), request("/admin/integrations/status"), request(`/admin/partners?status=${partnerFilter}&limit=100`),
       ]);
       setData({ ...f, ...i, ...t, ...st, ...summary });
-      setOpsBookings(bookingResult.bookings || []); setOnlinePayments(onlinePaymentResult || { payments: [], counts: {} }); setIntegrationConfig(integrationResult || { onlinePaymentAvailable: false, smsNotificationsEnabled: false, paymentProvider: "bkash", currency: "BDT", smsProvider: "mimsms" }); setServiceReports(reportResult.reports || []); setPartsRequests(partsResult.requests || []);
+      setOpsBookings(bookingResult.bookings || []); setPartners(partnerResult.partners || []);
+      const approvedPartnerResult = await request("/admin/partners?status=approved&limit=100"); setApprovedPartners(approvedPartnerResult.partners || []);
+      const docsResult = await request("/admin/partner-documents"); setPartnerDocuments(docsResult.documents || []);
+      const qualityResult = await request("/admin/partner-quality"); setPartnerQuality(qualityResult || { partners: [], claims: [] }); setOnlinePayments(onlinePaymentResult || { payments: [], counts: {} }); setIntegrationConfig(integrationResult || { onlinePaymentAvailable: false, smsNotificationsEnabled: false, paymentProvider: "bkash", currency: "BDT", smsProvider: "mimsms" }); setServiceReports(reportResult.reports || []); setPartsRequests(partsResult.requests || []);
       const quotationResult = await request("/admin/quotations?limit=100"); setAdminQuotations(quotationResult.quotations || []); setQuotationPagination(quotationResult.pagination || {page:1,pages:1,total:0,limit:100});
+      const [settlementResult, leaveResult, auditResult] = await Promise.all([
+        request("/admin/partner-settlements").catch(() => ({ settlements: [] })),
+        request("/admin/technician-leave-requests").catch(() => ({ requests: [] })),
+        request("/admin/audit-logs?limit=100").catch(() => ({ logs: [] })),
+      ]);
+      setPartnerSettlements(settlementResult.settlements || []); setLeaveRequests(leaveResult.requests || []); setAuditLogs(auditResult.logs || []);
     } catch (e) {
       setError(e.message);
     }
@@ -943,6 +966,53 @@ export function AdminOperationsPage() {
   useEffect(() => {
     if (token) load();
   }, []);
+  useEffect(() => {
+    if (!token) return;
+    request(`/admin/partners?status=${partnerFilter}&limit=100`).then(result => setPartners(result.partners || [])).catch(e => setError(e.message));
+  }, [partnerFilter]);
+  async function sendPartnerOffer() {
+    setBusy(true); setError("");
+    try { await request(`/admin/bookings/${partnerDispatch.bookingId}/partner-offers`, { method: "POST", body: JSON.stringify({ partnerId: partnerDispatch.partnerId }) }); setNotice("Partner offer পাঠানো হয়েছে।"); setPartnerDispatch({ bookingId: "", partnerId: "" }); await load(); }
+    catch (e) { setError(e.message); } finally { setBusy(false); }
+  }
+  async function saveServiceFulfilment() {
+    setBusy(true); setError("");
+    try { await request(`/admin/services/${encodeURIComponent(serviceFulfilment.serviceId)}/fulfilment`, { method: "PATCH", body: JSON.stringify({ fulfilment: serviceFulfilment.fulfilment, partnerIds: serviceFulfilment.partnerIds.split(",").map(x => x.trim()).filter(Boolean) }) }); setNotice("Service fulfilment configuration সংরক্ষিত হয়েছে।"); }
+    catch (e) { setError(e.message); } finally { setBusy(false); }
+  }
+  async function approvePartnerPayout(booking) {
+    const amount = Number(payoutAmountEdits[booking._id]);
+    if (!Number.isFinite(amount) || amount <= 0) { setError("সঠিক Partner payout amount দিন।"); return; }
+    setBusy(true); setError("");
+    try { await request(`/admin/partner-settlements/${booking._id}/approve-amount`, { method: "PATCH", body: JSON.stringify({ partnerId: booking.partnerId, amount }) }); setNotice("Partner payout amount অনুমোদিত হয়েছে।"); await load(); }
+    catch (e) { setError(e.message); } finally { setBusy(false); }
+  }
+  async function settlePartner(entry, status) {
+    const partnerId = entry.partnerId || ""; const bookingId = String(entry.bookingId || "");
+    setBusy(true); setError("");
+    try { await request(`/admin/partner-settlements/${bookingId}`, { method: "PATCH", body: JSON.stringify({ status, partnerId, reference: settlementEdits[entry._id] || "" }) }); setNotice(status === "paid" ? "Partner payout Paid হিসেবে নিশ্চিত হয়েছে।" : "Settlement বাতিল করা হয়েছে।"); await load(); }
+    catch (e) { setError(e.message); } finally { setBusy(false); }
+  }
+  async function manualCompleteBooking() {
+    setBusy(true); setError("");
+    try { await request(`/admin/bookings/${manualCompletion.bookingId}/manual-completion`, { method: "POST", body: JSON.stringify({ reason: manualCompletion.reason }) }); setNotice("Manual completion audit সহ সংরক্ষিত হয়েছে।"); setManualCompletion({ bookingId: "", reason: "" }); await load(); }
+    catch (e) { setError(e.message); } finally { setBusy(false); }
+  }
+  async function reviewLeave(requestId, status) {
+    setBusy(true); setError("");
+    try { await request(`/admin/technician-leave-requests/${encodeURIComponent(requestId)}`, { method: "PATCH", body: JSON.stringify({ status }) }); setNotice(`Leave request ${status} হয়েছে।`); await load(); }
+    catch (e) { setError(e.message); } finally { setBusy(false); }
+  }
+  async function updatePartnerStatus(partner, status) {
+    setBusy(true); setError("");
+    try { await request(`/admin/partners/${partner._id}/status`, {method:"PATCH", body:JSON.stringify({status})}); setNotice("Partner account status আপডেট হয়েছে।"); await load(); }
+    catch(e){setError(e.message);} finally{setBusy(false);}
+  }
+  async function savePartnerProfile(partner) {
+    const edit=partnerEdits[partner._id]||{}; setBusy(true); setError("");
+    try { await request(`/admin/partners/${partner._id}/profile`, {method:"PATCH", body:JSON.stringify({serviceIds:(edit.serviceIds??partner.partnerProfile?.serviceIds?.join(",")??"").split(",").map(x=>x.trim()).filter(Boolean),serviceAreas:(edit.serviceAreas??partner.partnerProfile?.serviceAreas?.join(",")??"").split(",").map(x=>x.trim()).filter(Boolean),commissionRate:Number(edit.commissionRate??partner.partnerCommissionRate??0)})}); setNotice("Partner service coverage ও commission সংরক্ষণ হয়েছে।"); await load(); }
+    catch(e){setError(e.message);} finally{setBusy(false);}
+  }
   async function addFinance(e) {
     e.preventDefault();
     setBusy(true);
@@ -1109,6 +1179,9 @@ export function AdminOperationsPage() {
             ["overview", "Overview & Reports"],
             ["technicians", `Technician Management${data.technicians.filter(t => (t.technicianStatus || t.accountStatus || "pending") === "pending").length ? ` (${data.technicians.filter(t => (t.technicianStatus || t.accountStatus || "pending") === "pending").length})` : ""}`],
             ["staff", `Staff Account Approval${data.staff.filter(m => (m.accountStatus || "pending") === "pending").length ? ` (${data.staff.filter(m => (m.accountStatus || "pending") === "pending").length})` : ""}`],
+            ["partners", "Partner Management"],
+            ["partnerQuality", "Partner Performance & Quality"],
+            ["leaveRequests", "Technician Leave Approval"],
             ["finance", "আয়-ব্যয়"],
             ["payments", "Booking Payments"],
             ["quotations", "Quotations"],
@@ -1239,6 +1312,40 @@ export function AdminOperationsPage() {
                 </tbody>
               </table>
             </div>
+          </div>
+        )}
+        {tab === "partners" && (
+          <div className="admin-table-card">
+            <div className="table-toolbar"><div><h2>Partner Management</h2><p>Partner আবেদন যাচাই, অনুমোদন, সার্ভিস এলাকা ও কমিশন নিয়ন্ত্রণ করুন।</p></div><div className="table-filters"><select value={partnerFilter} onChange={e=>setPartnerFilter(e.target.value)}><option value="pending">Pending</option><option value="approved">Approved</option><option value="suspended">Suspended</option><option value="rejected">Rejected</option></select><button className="btn btn-outline btn-small" onClick={load}>Refresh</button></div></div>
+            <section className="partner-card" style={{marginTop:20}}><h3>Partner Document Verification</h3><p>Trade License, NID ও অন্যান্য নথি যাচাই করে সিদ্ধান্ত দিন।</p><div className="partner-admin-list">{partnerDocuments.map(doc=><article className="partner-admin-card" key={`${doc.partnerId}-${doc.documentId}`}><div className="partner-admin-head"><div><b>{doc.partnerName}</b><small>{doc.email} · {doc.type} · {doc.originalName}</small><small>Status: {doc.status}</small></div><div><button className="btn btn-outline btn-small" onClick={async()=>{try{const r=await fetch(`${API}/admin/partner-documents/${doc.partnerId}/${doc.documentId}/file`,{headers:{Authorization:`Bearer ${token}`}});if(!r.ok)throw new Error('Document open failed');const blob=await r.blob();const url=URL.createObjectURL(blob);window.open(url,'_blank','noopener');}catch(e){setError(e.message)}}}>View Document</button><select value={doc.status} onChange={async e=>{try{await request(`/admin/partner-documents/${doc.partnerId}/${doc.documentId}`,{method:'PATCH',body:JSON.stringify({status:e.target.value,reviewNote:''})});setNotice('Document verification status updated.');await load();}catch(err){setError(err.message)}}}><option value="pending">Pending</option><option value="approved">Approved</option><option value="rejected">Rejected</option></select></div></div></article>)}{!partnerDocuments.length&&<div className="partner-empty">কোনো Partner document জমা হয়নি।</div>}</div></section>
+            <section className="partner-card" style={{marginTop:20,padding:20}}><h3>Partner Job Dispatch</h3><p>Booking ID এবং অনুমোদিত Partner ID দিয়ে কাজের Offer পাঠান।</p><div className="partner-admin-fields"><label>Booking ID<input value={partnerDispatch.bookingId} onChange={e=>setPartnerDispatch(v=>({...v,bookingId:e.target.value}))} placeholder="Booking MongoDB ID" /></label><label>Partner<select value={partnerDispatch.partnerId} onChange={e=>setPartnerDispatch(v=>({...v,partnerId:e.target.value}))}><option value="">Select approved partner</option>{approvedPartners.map(p=><option key={p._id} value={p._id}>{p.partnerProfile?.businessName||p.name} — {p.email}</option>)}</select></label><button className="btn btn-primary" disabled={busy||!partnerDispatch.bookingId||!partnerDispatch.partnerId} onClick={sendPartnerOffer}>Send Partner Offer</button></div></section>
+            <section className="partner-card" style={{marginTop:16,padding:20}}><h3>Service Fulfilment Configuration</h3><p>সার্ভিসটি In-house, Partner অথবা Mixed পদ্ধতিতে পরিচালনা করুন। Partner/Mixed হলে অনুমোদিত Partner ID নির্বাচন করুন।</p><div className="partner-admin-fields"><label>Service ID<input value={serviceFulfilment.serviceId} onChange={e=>setServiceFulfilment(v=>({...v,serviceId:e.target.value}))} placeholder="CMS service ID" /></label><label>Fulfilment<select value={serviceFulfilment.fulfilment} onChange={e=>setServiceFulfilment(v=>({...v,fulfilment:e.target.value}))}><option value="inhouse">In-house</option><option value="partner">Partner</option><option value="mixed">Mixed</option></select></label><label>Approved Partner IDs (comma separated)<input value={serviceFulfilment.partnerIds} onChange={e=>setServiceFulfilment(v=>({...v,partnerIds:e.target.value}))} placeholder="Partner MongoDB IDs" /></label><button className="btn btn-primary" disabled={busy||!serviceFulfilment.serviceId} onClick={saveServiceFulfilment}>Save Fulfilment</button></div></section>
+            <section className="partner-card" style={{marginTop:16,padding:20}}><h3>Approve Partner Payout Amount</h3><p>Partner-এর accepted/completed job-এর প্রস্তাবিত payout যাচাই করে অনুমোদন দিন। অনুমোদিত অঙ্ক Customer booking value অতিক্রম করতে পারবে না।</p><div className="partner-admin-list">{opsBookings.filter(b=>b.partnerId&&["accepted","completed"].includes(b.partnerStatus)&&!b.partnerPayout?.approvedBy).map(b=><article className="partner-admin-card" key={b._id}><div className="partner-admin-head"><div><b>{b.ticketId||b._id} · {b.serviceName}</b><small>Partner: {b.partnerId} · Proposed: {money(b.partnerPayout?.amount||0)} · Customer total: {money(b.totalAmount||b.quotedAmount||0)}</small></div><div style={{display:"flex",gap:8,flexWrap:"wrap"}}><input type="number" min="1" max={Number(b.totalAmount||b.quotedAmount||0)||undefined} placeholder="Approved amount" value={payoutAmountEdits[b._id]??b.partnerPayout?.amount??""} onChange={e=>setPayoutAmountEdits(v=>({...v,[b._id]:e.target.value}))}/><button className="btn btn-primary btn-small" disabled={busy} onClick={()=>approvePartnerPayout(b)}>Approve Amount</button></div></div></article>)}{!opsBookings.some(b=>b.partnerId&&["accepted","completed"].includes(b.partnerStatus)&&!b.partnerPayout?.approvedBy)&&<div className="partner-empty">অনুমোদনের অপেক্ষায় কোনো Partner payout নেই।</div>}</div></section>
+            <section className="partner-card" style={{marginTop:16,padding:20}}><h3>Partner Settlement Approval</h3><p>Pending payout যাচাই করে Paid অথবা Rejected করুন। Paid করার আগে payment reference লিখুন।</p><div className="partner-admin-list">{partnerSettlements.map(entry=><article className="partner-admin-card" key={entry._id||entry.sourceKey}><div className="partner-admin-head"><div><b>{entry.ticketId||entry.bookingId}</b><small>Partner: {entry.partnerId} · Amount: {money(entry.amount)} · {new Date(entry.createdAt).toLocaleString("en-GB")}</small></div><div style={{display:"flex",gap:8,flexWrap:"wrap"}}><input aria-label="Payment reference" placeholder="Payment reference" value={settlementEdits[entry._id]||""} onChange={e=>setSettlementEdits(v=>({...v,[entry._id]:e.target.value}))}/><button className="btn btn-primary btn-small" disabled={busy||!settlementEdits[entry._id]} onClick={()=>settlePartner(entry,"paid")}>Mark Paid</button><button className="btn btn-outline btn-small" disabled={busy} onClick={()=>settlePartner(entry,"rejected")}>Reject</button></div></div></article>)}{!partnerSettlements.length&&<div className="partner-empty">কোনো Pending Partner Settlement নেই।</div>}</div></section>
+            <div className="partner-admin-list">{partners.map(partner=>{const edit=partnerEdits[partner._id]||{};return <article key={partner._id} className="partner-admin-card"><div className="partner-admin-head"><div><b>{partner.partnerProfile?.businessName||partner.name}</b><small>{partner.name} · {partner.email} · {partner.phone||"—"}</small></div><select value={partner.accountStatus||"pending"} disabled={busy} onChange={e=>updatePartnerStatus(partner,e.target.value)}><option value="pending">Pending</option><option value="approved">Approved</option><option value="suspended">Suspended</option><option value="rejected">Rejected</option></select></div><div className="partner-admin-fields"><label>Service IDs (comma separated)<input value={edit.serviceIds??(partner.partnerProfile?.serviceIds||[]).join(", ")} onChange={e=>setPartnerEdits(s=>({...s,[partner._id]:{...s[partner._id],serviceIds:e.target.value}}))} placeholder="ac-repair, electrical"/></label><label>Service Areas<input value={edit.serviceAreas??(partner.partnerProfile?.serviceAreas||[]).join(", ")} onChange={e=>setPartnerEdits(s=>({...s,[partner._id]:{...s[partner._id],serviceAreas:e.target.value}}))} placeholder="Chattogram, Agrabad"/></label><label>Commission / Partner Rate (%)<input type="number" min="0" max="100" value={edit.commissionRate??partner.partnerCommissionRate??0} onChange={e=>setPartnerEdits(s=>({...s,[partner._id]:{...s[partner._id],commissionRate:e.target.value}}))}/></label><button className="btn btn-primary" disabled={busy} onClick={()=>savePartnerProfile(partner)}>Save Partner Profile</button></div><small className="partner-admin-meta">Type: {partner.partnerProfile?.partnerType||"individual"} · Registered: {partner.createdAt?new Date(partner.createdAt).toLocaleDateString("en-GB"):"—"} · Rating: {partner.partnerRating||"Not rated"}</small></article>})}{!partners.length&&<div className="partner-empty">এই Status-এ কোনো Partner পাওয়া যায়নি।</div>}</div>
+          </div>
+        )}
+        {tab === "leaveRequests" && (
+          <>
+          <section className="partner-card" style={{marginTop:20,padding:20}}><h3>SMS Failure – Admin Manual Completion</h3><p>শুধু SMS/OTP delivery ব্যর্থ হলে ব্যবহার করুন। কারণ বাধ্যতামূলক এবং প্রতিটি override Audit Log-এ সংরক্ষিত হবে।</p><div className="partner-admin-fields"><label>Booking MongoDB ID<input value={manualCompletion.bookingId} onChange={e=>setManualCompletion(v=>({...v,bookingId:e.target.value}))} placeholder="Booking ID" /></label><label>Override reason<input value={manualCompletion.reason} onChange={e=>setManualCompletion(v=>({...v,reason:e.target.value}))} placeholder="SMS gateway failed; customer verified by phone..." /></label><button className="btn btn-primary" disabled={busy||!manualCompletion.bookingId||manualCompletion.reason.trim().length<10} onClick={manualCompleteBooking}>Record Manual Completion</button></div></section>
+          <section className="partner-card" style={{marginTop:16,padding:20}}><h3>Admin Audit Log</h3><p>সর্বশেষ ১০০টি Admin mutation এবং manual completion override। Sensitive request body সংরক্ষণ করা হয় না।</p><div className="partner-admin-list">{auditLogs.map((log,i)=><article className="partner-admin-card" key={log._id||i}><b>{log.action}</b><small>{log.actorId} · HTTP {log.statusCode||"—"} · {log.createdAt?new Date(log.createdAt).toLocaleString("en-GB"):"—"}</small></article>)}{!auditLogs.length&&<div className="partner-empty">এখনো Audit Log নেই।</div>}</div></section>
+          <div className="admin-table-card"><div className="table-toolbar"><div><h2>Technician Leave Requests</h2><p>Technician-এর ছুটির আবেদন পর্যালোচনা ও অনুমোদন করুন।</p></div><button className="btn btn-outline btn-small" onClick={load}>Refresh</button></div>
+            <div className="partner-admin-list">{leaveRequests.map(item=><article className="partner-admin-card" key={item.requestId}><div className="partner-admin-head"><div><b>{item.technicianName||item.technicianId}</b><small>{item.startDate} → {item.endDate} · Submitted {item.createdAt?new Date(item.createdAt).toLocaleString("en-GB"):"—"}</small><p>{item.reason}</p><small>Status: {item.status}</small></div>{item.status==="pending"&&<div style={{display:"flex",gap:8}}><button className="btn btn-primary btn-small" disabled={busy} onClick={()=>reviewLeave(item.requestId,"approved")}>Approve</button><button className="btn btn-outline btn-small" disabled={busy} onClick={()=>reviewLeave(item.requestId,"rejected")}>Reject</button></div>}</div></article>)}{!leaveRequests.length&&<div className="partner-empty">কোনো Leave Request নেই।</div>}</div>
+          </div>
+          </>
+        )}
+        {tab === "partnerQuality" && (
+          <div className="admin-table-card">
+            <div className="table-toolbar"><div><h2>Partner Performance & Quality Control</h2><p>কাজের সফলতা, Customer Rating, পাওনা এবং Warranty/Complaint পর্যবেক্ষণ করুন।</p></div><button className="btn btn-outline btn-small" onClick={load}>Refresh</button></div>
+            <div className="table-scroll"><table className="bookings-table"><thead><tr><th>Partner</th><th>Jobs</th><th>Completed</th><th>Completion</th><th>Rating</th><th>Open Claims</th><th>Pending Payable</th><th>Paid</th></tr></thead><tbody>
+              {partnerQuality.partners.map(p => <tr key={p.partnerId}><td><b>{p.name}</b><small>{p.email} · {p.status}</small></td><td>{p.totalJobs}</td><td>{p.completedJobs}</td><td>{p.completionRate}%</td><td>{p.averageRating ?? "Not rated"} ({p.ratingCount})</td><td>{p.openClaims}</td><td>{money(p.pendingPayable)}</td><td>{money(p.paidPayout)}</td></tr>)}
+              {!partnerQuality.partners.length && <tr><td colSpan="8">কোনো Partner performance data পাওয়া যায়নি।</td></tr>}
+            </tbody></table></div>
+            <div className="table-toolbar"><div><h3>Warranty Claims & Complaints</h3><p>Customer-এর অভিযোগ ও Warranty Claim পর্যালোচনা করুন।</p></div></div>
+            <div className="table-scroll"><table className="bookings-table"><thead><tr><th>Ticket</th><th>Type</th><th>Subject</th><th>Status</th><th>Review Note</th><th>Action</th></tr></thead><tbody>
+              {partnerQuality.claims.map(c => <tr key={c.claimId}><td>{c.ticketId}</td><td>{c.type}</td><td>{c.subject}</td><td><select value={c.status} onChange={async e=>{const status=e.target.value;try{await request(`/admin/partner-quality/claims/${c.claimId}`,{method:"PATCH",body:JSON.stringify({status,reviewNote:c.reviewNote||""})});setNotice("Claim status আপডেট হয়েছে।");const q=await request("/admin/partner-quality");setPartnerQuality(q);}catch(err){setError(err.message);}}}><option value="open">Open</option><option value="in_progress">In Progress</option><option value="resolved">Resolved</option><option value="rejected">Rejected</option></select></td><td>{c.reviewNote||"—"}</td><td><button className="btn btn-outline btn-small" onClick={async()=>{const reviewNote=window.prompt("Review note লিখুন",c.reviewNote||"");if(reviewNote===null)return;try{await request(`/admin/partner-quality/claims/${c.claimId}`,{method:"PATCH",body:JSON.stringify({status:c.status,reviewNote})});const q=await request("/admin/partner-quality");setPartnerQuality(q);setNotice("Review note সংরক্ষিত হয়েছে।");}catch(err){setError(err.message);}}}>Review note</button></td></tr>)}
+              {!partnerQuality.claims.length && <tr><td colSpan="6">কোনো Warranty Claim বা Complaint নেই।</td></tr>}
+            </tbody></table></div>
           </div>
         )}
         {tab === "staff" && (

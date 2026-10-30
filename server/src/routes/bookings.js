@@ -30,6 +30,7 @@ router.post('/bookings', requireAuth, requireRole('customer'), async (req, res, 
       ticketId: `MU-${new Date().getFullYear()}-${randomUUID().slice(0, 6).toUpperCase()}`,
       name, phone, email: String(account.email || '').trim().slice(0, 120),
       serviceId, serviceName: currentServices.find(s => s.id === serviceId)?.name || currentPackages.find(p => p.id === serviceId)?.name, userId,
+      fulfilmentType: currentServices.find(s => s.id === serviceId)?.fulfilment || 'inhouse', partnerId: null, partnerStatus: 'not_dispatched',
       address, area: String(req.body.area || 'Maijdee').trim(), preferredDate: String(req.body.preferredDate || ''),
       preferredTime: String(req.body.preferredTime || 'যেকোনো সময়'), problem, status: 'New',
       adminNote: '', createdAt: new Date(), updatedAt: new Date()
@@ -48,8 +49,12 @@ router.get('/customer/bookings', requireAuth, requireRole('customer'), async (re
     const limit = Math.min(100, Math.max(1, Number.parseInt(req.query.limit, 10) || 25));
     const col = getDB().collection('bookings');
     const filter = { userId: req.user.sub, deletedAt: { $exists: false } };
-    const [bookings, total] = await Promise.all([col.find(filter).sort({ createdAt: -1 }).skip((page-1)*limit).limit(limit).project({ name:1, ticketId:1, serviceName:1, status:1, createdAt:1, preferredDate:1, preferredTime:1, paymentAmount:1, paymentStatus:1, payments:1, quotedAmount:1, totalAmount:1 }).toArray(), col.countDocuments(filter)]);
-    res.json({ bookings, pagination: { page, limit, total, pages: Math.max(1, Math.ceil(total/limit)) } });
+    const [bookings, total] = await Promise.all([col.find(filter).sort({ createdAt: -1 }).skip((page-1)*limit).limit(limit).project({ name:1, ticketId:1, serviceName:1, status:1, createdAt:1, preferredDate:1, preferredTime:1, paymentAmount:1, paymentStatus:1, payments:1, quotedAmount:1, totalAmount:1, partnerId:1 }).toArray(), col.countDocuments(filter)]);
+    const partnerIds=[...new Set(bookings.map(b=>b.partnerId).filter(id=>ObjectId.isValid(id)))];
+    const partners=partnerIds.length?await getDB().collection('users').find({_id:{$in:partnerIds.map(id=>new ObjectId(id))},role:'partner'}).project({name:1,accountStatus:1,'partnerProfile.businessName':1,'partnerProfile.partnerType':1,'partnerProfile.verificationToken':1,'partnerProfile.verificationTokenHash':1,'partnerProfile.documents':1,'partnerProfile.agreementAcceptance':1}).toArray():[];
+    const byId=new Map(partners.map(p=>[p._id.toString(),p]));
+    const enriched=bookings.map(b=>{const p=byId.get(String(b.partnerId||''));const verified=!!(p&&p.accountStatus==='approved'&&p.partnerProfile?.verificationToken&&p.partnerProfile?.verificationTokenHash&&p.partnerProfile?.agreementAcceptance?.version==='2026-10-v1'&&(p.partnerProfile?.documents||[]).some(d=>d.status==='approved'));return {...b,partnerVerification:p?{businessName:p.partnerProfile?.businessName||p.name,status:verified?'ACTIVE':p.accountStatus==='suspended'?'SUSPENDED':'INACTIVE',verificationUrl:verified?`/partner/verify/${p.partnerProfile.verificationToken}`:null}:null};});
+    res.json({ bookings:enriched, pagination: { page, limit, total, pages: Math.max(1, Math.ceil(total/limit)) } });
   } catch (e) { next(e); }
 });
 router.patch('/customer/bookings/:id/cancel', requireAuth, requireRole('customer'), async (req, res, next) => {
@@ -81,7 +86,7 @@ router.patch('/customer/bookings/:id/reschedule', requireAuth, requireRole('cust
 
 router.get('/customer/payments', requireAuth, requireRole('customer'), async (req, res, next) => {
   try {
-    const bookings = await getDB().collection('bookings').find({ userId: req.user.sub }).project({ ticketId:1, serviceName:1, payments:1, paymentAmount:1, paymentStatus:1, quotedAmount:1, totalAmount:1, createdAt:1 }).sort({ createdAt:-1 }).limit(500).toArray();
+    const bookings = await getDB().collection('bookings').find({ userId: req.user.sub, deletedAt: { $exists: false } }).project({ ticketId:1, serviceName:1, payments:1, paymentAmount:1, paymentStatus:1, quotedAmount:1, totalAmount:1, createdAt:1 }).sort({ createdAt:-1 }).limit(500).toArray();
     const payments = bookings.flatMap(b => (b.payments || []).map(p => ({ ...p, ticketId: b.ticketId, serviceName: b.serviceName, bookingId: b._id, paymentStatus: b.paymentStatus || 'unpaid' })));
     res.json({ payments, bookings: bookings.map(b => ({ _id:b._id, ticketId:b.ticketId, serviceName:b.serviceName, paidAmount:Number(b.paymentAmount || (b.payments || []).reduce((n,p)=>n+Number(p.amount||0),0)), expectedAmount:Number(b.totalAmount || b.quotedAmount || 0), paymentStatus:b.paymentStatus || 'unpaid' })) });
   } catch (e) { next(e); }
@@ -139,7 +144,12 @@ router.patch('/bookings/:id/status', requireAuth, async (req, res, next) => {
     if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ message:'Invalid booking ID' });
     const status = String(req.body.status || '');
     if (!statuses.includes(status)) return res.status(400).json({ message:'Invalid status' });
-    const result = await getDB().collection('bookings').updateOne({ _id:new ObjectId(req.params.id) }, { $set:{ status, updatedAt:new Date(), ...(req.body.adminNote !== undefined ? { adminNote:String(req.body.adminNote).slice(0,1000) } : {}) }, $push:{ statusHistory:{ status, at:new Date(), by:req.user.sub, byRole:req.user.role } } });
+    const col = getDB().collection('bookings');
+    const current = await col.findOne({ _id:new ObjectId(req.params.id), deletedAt: { $exists:false } });
+    if (!current) return res.status(404).json({ message:'Booking not found' });
+    if (status === 'Completed' && current.fulfilmentType !== 'inhouse' && current.partnerWorkStatus !== 'completed') return res.status(409).json({ message:'Partner কাজ Customer OTP যাচাই ছাড়া Completed করা যাবে না।' });
+    const now = new Date();
+    const result = await col.updateOne({ _id:new ObjectId(req.params.id), status:current.status, deletedAt: { $exists:false } }, { $set:{ status, updatedAt:now, ...(req.body.adminNote !== undefined ? { adminNote:String(req.body.adminNote).slice(0,1000) } : {}) }, $push:{ statusHistory:{ status, at:now, by:req.user.sub, byRole:req.user.role, adminOverride:status === 'Completed' } } });
     if (!result.matchedCount) return res.status(404).json({ message:'Booking not found' });
     const updatedBooking = await getDB().collection('bookings').findOne({ _id:new ObjectId(req.params.id) }, { projection:{ phone:1, ticketId:1 } });
     if (updatedBooking) await Promise.all([notifySmsSafely({ to: updatedBooking.phone, message: `MU Home Service: বুকিং ${updatedBooking.ticketId}-এর নতুন Status: ${status}.`, context: 'booking-status' }), notifyWhatsAppSafely({ to: updatedBooking.phone, message: `MU Home Service: বুকিং ${updatedBooking.ticketId}-এর নতুন Status: ${status}.`, context: 'booking-status' })]);
