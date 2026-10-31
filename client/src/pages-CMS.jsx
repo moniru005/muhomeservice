@@ -219,7 +219,8 @@ export default function CMSPage() {
     [media, setMedia] = useState([]),
     [services, setServices] = useState([]),
     [packages, setPackages] = useState([]),
-    [activeTheme, setActiveTheme] = useState("classic"),
+    [activeDesignTheme, setActiveDesignTheme] = useState("classic"),
+    [activeColorTheme, setActiveColorTheme] = useState("classic"),
     [notice, setNotice] = useState(""),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false),
@@ -256,7 +257,8 @@ export default function CMSPage() {
       setMedia(d.media || []);
       setServices(d.services || []);
       setPackages(d.packages || []);
-      setActiveTheme(d.theme?.activeTheme || "classic");
+      setActiveDesignTheme(d.theme?.activeDesignTheme || d.theme?.activeTheme || "classic");
+      setActiveColorTheme(d.theme?.activeColorTheme || d.theme?.activeTheme || "classic");
       setError("");
     } catch (e) {
       setError(e.message);
@@ -1732,32 +1734,50 @@ export default function CMSPage() {
               <div className="pro-card-heading">
                 <div>
                   <span className="pro-card-kicker">FRONTEND APPEARANCE</span>
-                  <h2>Ready-made website themes</h2>
-                  <p>Select a design and publish it to update the public website in one click.</p>
+                  <h2>Website Theme Studio</h2>
+                  <p>Choose a color palette independently from the complete public website design. Both settings are published together.</p>
                 </div>
                 <Globe size={20} />
               </div>
-              <div className="pro-theme-grid">
-                {[
-                  {id:"classic",name:"Classic Original",desc:"The current MU Home Service navy and lime look.",colors:["#0b2340","#c7f36b","#f5f8fa"]},
-                  {id:"ocean",name:"Ocean Blue",desc:"Clean blue gradients with a bright, professional feel.",colors:["#123b70","#35b6d8","#eef6ff"]},
-                  {id:"emerald",name:"Emerald Fresh",desc:"Fresh green accents and calm, nature-inspired surfaces.",colors:["#123c35","#a7e6bd","#f0faf5"]},
-                  {id:"sunset",name:"Sunset Warm",desc:"Warm terracotta accents with soft cream backgrounds.",colors:["#542d2b","#ffb36b","#fff7ef"]}
-                ].map((theme) => (
-                  <button type="button" key={theme.id} className={`pro-theme-option ${activeTheme===theme.id?"selected":""}`} onClick={()=>setActiveTheme(theme.id)} aria-pressed={activeTheme===theme.id}>
-                    <span className={`pro-theme-preview theme-preview-${theme.id}`}>
-                      <i /><i /><i />
-                      <b />
-                    </span>
-                    <span className="pro-theme-option-copy"><b>{theme.name}</b><small>{theme.desc}</small></span>
-                    <span className="pro-theme-swatches">{theme.colors.map(c=><i key={c} style={{background:c}} />)}</span>
-                    {activeTheme===theme.id && <span className="pro-theme-selected"><CheckCircle2 size={14}/> Selected</span>}
-                  </button>
-                ))}
+              <div className="pro-theme-group">
+                <div className="pro-theme-group-heading"><div><h3>Color Themes</h3><p>Change the website color palette while keeping the selected layout, content and images.</p></div><span className="pro-theme-group-count">4 palettes</span></div>
+                <div className="pro-theme-grid">
+                  {[
+                    {id:"classic",name:"Original Default",desc:"Restore the original MU Home Service navy, lime and soft-neutral palette.",colors:["#0b2340","#c7f36b","#f5f8fa"]},
+                    {id:"ocean",name:"Ocean Blue",desc:"Blue, cyan and crisp light surfaces.",colors:["#123b70","#35b6d8","#eef6ff"]},
+                    {id:"emerald",name:"Emerald Fresh",desc:"Fresh green accents and calm mint surfaces.",colors:["#123c35","#a7e6bd","#f0faf5"]},
+                    {id:"sunset",name:"Sunset Warm",desc:"Warm terracotta accents and soft cream surfaces.",colors:["#542d2b","#ffb36b","#fff7ef"]}
+                  ].map((theme) => (
+                    <button type="button" key={theme.id} className={`pro-theme-option ${activeColorTheme===theme.id?"selected":""}`} onClick={()=>setActiveColorTheme(theme.id)} aria-pressed={activeColorTheme===theme.id}>
+                      <span className={`pro-theme-preview theme-preview-${theme.id}`}><i /><i /><i /><b /></span>
+                      <span className="pro-theme-option-copy"><b>{theme.name}</b><small>{theme.desc}</small></span>
+                      <span className="pro-theme-swatches">{theme.colors.map(c=><i key={c} style={{background:c}} />)}</span>
+                      {activeColorTheme===theme.id && <span className="pro-theme-selected"><CheckCircle2 size={14}/> Selected</span>}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="pro-theme-group">
+                <div className="pro-theme-group-heading"><div><h3>Design Themes</h3><p>Change the complete public frontend experience, including page layout, section content, headings, copy and photography.</p></div><span className="pro-theme-group-count">4 designs</span></div>
+                <div className="pro-theme-grid">
+                  {[
+                    {id:"classic",name:"Classic Original",desc:"Keep the original MU Home Service layout and content.",colors:["#0b2340","#c7f36b","#f5f8fa"]},
+                    {id:"ocean",name:"Ocean Blue — Professional",desc:"Business-focused layout, English copy and home/office photography.",colors:["#123b70","#55d7e8","#eef6ff"]},
+                    {id:"emerald",name:"Emerald Fresh — Family Care",desc:"Family-first Bengali messaging, lifestyle imagery and fresh layout.",colors:["#123c35","#a7e6bd","#f0faf5"]},
+                    {id:"sunset",name:"Sunset Warm — Premium",desc:"Premium editorial layout, warm copy and premium photography.",colors:["#542d2b","#ffb36b","#fff7ef"]}
+                  ].map((theme) => (
+                    <button type="button" key={theme.id} className={`pro-theme-option ${activeDesignTheme===theme.id?"selected":""}`} onClick={()=>setActiveDesignTheme(theme.id)} aria-pressed={activeDesignTheme===theme.id}>
+                      <span className={`pro-theme-preview theme-preview-${theme.id}`}><i /><i /><i /><b /></span>
+                      <span className="pro-theme-option-copy"><b>{theme.name}</b><small>{theme.desc}</small></span>
+                      <span className="pro-theme-swatches">{theme.colors.map(c=><i key={c} style={{background:c}} />)}</span>
+                      {activeDesignTheme===theme.id && <span className="pro-theme-selected"><CheckCircle2 size={14}/> Selected</span>}
+                    </button>
+                  ))}
+                </div>
               </div>
               <div className="pro-theme-publish-row">
-                <span><ShieldCheck size={16}/> The selected theme applies to the public website, not the Admin workspace.</span>
-                <button className="pro-button pro-button-blue" disabled={busy} onClick={async()=>{setBusy(true);setError("");setNotice("");try{const d=await api("/admin/cms/theme",{method:"PUT",body:JSON.stringify({activeTheme})});setActiveTheme(d.theme?.activeTheme||activeTheme);setNotice("Website theme published successfully. The public frontend will use this theme now.");}catch(e){setError(e.message);}finally{setBusy(false);}}}><Globe size={15}/>{busy?"Publishing…":"Publish Theme"}</button>
+                <span><ShieldCheck size={16}/> Color palette and complete design are managed separately. Only the public frontend is affected.</span>
+                <button className="pro-button pro-button-blue" disabled={busy} onClick={async()=>{setBusy(true);setError("");setNotice("");try{const d=await api("/admin/cms/theme",{method:"PUT",body:JSON.stringify({activeColorTheme,activeDesignTheme})});setActiveDesignTheme(d.theme?.activeDesignTheme||activeDesignTheme);setActiveColorTheme(d.theme?.activeColorTheme||activeColorTheme);setNotice("Color theme and public design published successfully.");}catch(e){setError(e.message);}finally{setBusy(false);}}}><Globe size={15}/>{busy?"Publishing…":"Publish Theme"}</button>
               </div>
             </section>
             <section className="pro-card pro-settings-card">

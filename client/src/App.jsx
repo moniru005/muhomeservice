@@ -84,6 +84,7 @@ function RoutedApp() {
     let active = true;
     if (isAdminArea) {
       document.documentElement.removeAttribute("data-public-theme");
+      document.documentElement.removeAttribute("data-public-color-theme");
       return () => { active = false; };
     }
     fetch(`${API}/site-theme`, { cache: "no-store" })
@@ -91,11 +92,12 @@ function RoutedApp() {
       .then((data) => {
         if (active) {
           const valid = ["classic", "ocean", "emerald", "sunset"];
-          document.documentElement.dataset.publicTheme = valid.includes(data.activeTheme) ? data.activeTheme : "classic";
+          document.documentElement.dataset.publicTheme = valid.includes(data.activeDesignTheme || data.activeTheme) ? (data.activeDesignTheme || data.activeTheme) : "classic";
+          document.documentElement.dataset.publicColorTheme = ["classic","ocean","emerald","sunset"].includes(data.activeColorTheme) ? data.activeColorTheme : "classic";
         }
       })
       .catch(() => {
-        if (active) document.documentElement.dataset.publicTheme = "classic";
+        if (active) { document.documentElement.dataset.publicTheme = "classic"; document.documentElement.dataset.publicColorTheme = "classic"; }
       });
     return () => { active = false; };
   }, [isAdminArea, location.pathname]);

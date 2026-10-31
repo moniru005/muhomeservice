@@ -119,9 +119,11 @@ app.get("/api/site-theme", async (_req, res, next) => {
   try {
     const saved = await getDB().collection("siteContent").findOne({ _id: "frontendTheme" });
     const allowed = new Set(["classic", "ocean", "emerald", "sunset"]);
-    const activeTheme = allowed.has(saved?.activeTheme) ? saved.activeTheme : "classic";
+    const allowedColors = new Set(["classic", "ocean", "emerald", "sunset"]);
+    const activeDesignTheme = allowed.has(saved?.activeDesignTheme) ? saved.activeDesignTheme : (allowed.has(saved?.activeTheme) ? saved.activeTheme : "classic");
+    const activeColorTheme = allowedColors.has(saved?.activeColorTheme) ? saved.activeColorTheme : (allowedColors.has(saved?.activeTheme) ? saved.activeTheme : "classic");
     res.set("Cache-Control", "no-store");
-    res.json({ activeTheme });
+    res.json({ activeTheme: activeDesignTheme, activeDesignTheme, activeColorTheme });
   } catch (e) { next(e); }
 });
 app.get("/api/packages", async (_req, res, next) => {

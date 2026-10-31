@@ -1410,3 +1410,52 @@ html[data-public-theme="ocean"] .btn-primary,html[data-public-theme="emerald"] .
 html[data-public-theme="ocean"] .cms-public,html[data-public-theme="emerald"] .cms-public,html[data-public-theme="sunset"] .cms-public{background:var(--pale)}
 html[data-public-theme="ocean"] .cms-public-section.hero-section,html[data-public-theme="emerald"] .cms-public-section.hero-section,html[data-public-theme="sunset"] .cms-public-section.hero-section{background:linear-gradient(125deg,var(--navy),var(--navy2))}
 html[data-public-theme="ocean"] .cms-public-button,html[data-public-theme="emerald"] .cms-public-button,html[data-public-theme="sunset"] .cms-public-button{background:var(--lime);color:var(--navy)}
+
+
+/* Complete public theme compositions: distinct typography, layouts and editorial imagery. */
+.public-home .theme-team-photo{position:relative;min-height:390px;border-radius:24px;overflow:hidden;box-shadow:0 24px 60px rgba(8,28,48,.18)}
+.public-home .theme-team-photo img{display:block;width:100%;height:100%;min-height:390px;object-fit:cover}
+.public-home .theme-team-photo .uniform-tag{position:absolute;left:20px;bottom:20px;z-index:2}
+.public-home .theme-business-image{display:block;width:100%;height:190px;object-fit:cover;border-radius:16px;margin-bottom:14px}
+.public-home .theme-business-section .promo-feature-list{align-content:start}
+.public-home .theme-business-section .promo-feature-list>div{background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.12);border-radius:13px;padding:13px}
+.public-home .hero-image-frame>img{transition:transform .7s ease}
+.public-home .hero-image-frame:hover>img{transform:scale(1.035)}
+html[data-public-theme="ocean"] .public-home-ocean .hero-image-frame{border-radius:30px}
+html[data-public-theme="ocean"] .public-home-ocean .theme-team-photo{border-radius:30px 8px 30px 8px}
+html[data-public-theme="ocean"] .public-home-ocean .service-card,html[data-public-theme="ocean"] .public-home-ocean .contact-form-card{border-radius:18px;box-shadow:0 12px 34px rgba(18,59,112,.07)}
+html[data-public-theme="ocean"] .public-home-ocean .dark-promo{background:linear-gradient(115deg,#09284c,#145b8a)}
+html[data-public-theme="emerald"] .public-home-emerald .hero-image-frame{border-radius:48% 48% 22px 22px}
+html[data-public-theme="emerald"] .public-home-emerald .theme-team-photo{border-radius:48% 48% 22px 22px}
+html[data-public-theme="emerald"] .public-home-emerald .service-card,html[data-public-theme="emerald"] .public-home-emerald .package-card{border-radius:24px}
+html[data-public-theme="emerald"] .public-home-emerald .trust-strip{background:#e6f5eb}
+html[data-public-theme="emerald"] .public-home-emerald .dark-promo{background:linear-gradient(120deg,#123c35,#27765a)}
+html[data-public-theme="sunset"] .public-home-sunset .hero-image-frame{border-radius:8px 70px 8px 70px}
+html[data-public-theme="sunset"] .public-home-sunset .theme-team-photo{border-radius:8px 54px 8px 54px}
+html[data-public-theme="sunset"] .public-home-sunset .section-heading h2,html[data-public-theme="sunset"] .public-home-sunset .contact-copy h2{letter-spacing:-.04em}
+html[data-public-theme="sunset"] .public-home-sunset .service-card,html[data-public-theme="sunset"] .public-home-sunset .contact-form-card{border-radius:8px;box-shadow:0 18px 44px rgba(84,45,43,.08)}
+html[data-public-theme="sunset"] .public-home-sunset .dark-promo{background:linear-gradient(120deg,#442321,#87503c)}
+@media(max-width:760px){
+ .public-home .theme-team-photo,.public-home .theme-team-photo img{min-height:280px}
+ .public-home .theme-business-image{height:160px}
+ .public-home .hero-image-frame>img{transform:none}
+}
+
+
+/* Independent CMS color themes: palette can change without replacing page design/content. */
+html[data-public-color-theme="classic"]{--navy:#0b2340;--navy2:#102f51;--lime:#c7f36b;--green:#1c7759;--muted:#69778a;--line:#e6ebf0;--pale:#f5f8fa}
+html[data-public-color-theme="ocean"]{--navy:#123b70;--navy2:#174c82;--lime:#35b6d8;--green:#087e9b;--muted:#637b94;--line:#dce8f3;--pale:#eef6ff}
+html[data-public-color-theme="emerald"]{--navy:#123c35;--navy2:#195449;--lime:#a7e6bd;--green:#21865d;--muted:#667e74;--line:#dcebe2;--pale:#f0faf5}
+html[data-public-color-theme="sunset"]{--navy:#542d2b;--navy2:#713b34;--lime:#ffb36b;--green:#bd603c;--muted:#88766d;--line:#f0dfd2;--pale:#fff7ef}
+html[data-public-color-theme] .hero:before{background:radial-gradient(ellipse at 75% 35%,color-mix(in srgb,var(--green) 45%,transparent) 0%,transparent 48%),linear-gradient(115deg,var(--navy) 15%,var(--navy2) 100%)}
+html[data-public-color-theme] .hero h1 span,html[data-public-color-theme] .dark-promo h2 span{color:var(--lime)}
+html[data-public-color-theme] .btn-lime{background:var(--lime);color:var(--navy)}
+html[data-public-color-theme] .btn-lime:hover{filter:brightness(1.08)}
+html[data-public-color-theme] .section-kicker,html[data-public-color-theme] .section-heading h2 span,html[data-public-color-theme] .contact-copy h2 span,html[data-public-color-theme] .text-link{color:var(--green)}
+html[data-public-color-theme] .service-icon,html[data-public-color-theme] .trust-icon{background:var(--pale);color:var(--green)}
+html[data-public-color-theme] .package-section,html[data-public-color-theme] .team-uniform-section,html[data-public-color-theme] .cms-public{background:var(--pale)}
+html[data-public-color-theme] .site-header{border-bottom-color:var(--line)}
+html[data-public-color-theme] .brand-mark{background:var(--navy);color:var(--lime)}
+html[data-public-color-theme] .btn-primary{background:var(--navy)}
+html[data-public-color-theme] .cms-public-section.hero-section{background:linear-gradient(125deg,var(--navy),var(--navy2))}
+html[data-public-color-theme] .cms-public-button{background:var(--lime);color:var(--navy)}
