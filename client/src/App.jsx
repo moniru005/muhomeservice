@@ -80,6 +80,25 @@ import {
 function RoutedApp() {
   const location = useLocation();
   const isAdminArea = location.pathname.startsWith("/admin") || location.pathname.startsWith("/partner");
+  useEffect(() => {
+    let active = true;
+    if (isAdminArea) {
+      document.documentElement.removeAttribute("data-public-theme");
+      return () => { active = false; };
+    }
+    fetch(`${API}/site-theme`, { cache: "no-store" })
+      .then((response) => response.ok ? response.json() : Promise.reject(new Error("Theme unavailable")))
+      .then((data) => {
+        if (active) {
+          const valid = ["classic", "ocean", "emerald", "sunset"];
+          document.documentElement.dataset.publicTheme = valid.includes(data.activeTheme) ? data.activeTheme : "classic";
+        }
+      })
+      .catch(() => {
+        if (active) document.documentElement.dataset.publicTheme = "classic";
+      });
+    return () => { active = false; };
+  }, [isAdminArea, location.pathname]);
   const { services, packages } = useSiteContent(
     API,
     fallbackServices,

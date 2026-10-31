@@ -193,3 +193,13 @@ Latest role fixes add booking-form photo upload, customer reschedule requests, a
 ## Third-party Partner fulfilment
 
 See `PARTNER-ECOSYSTEM-IMPLEMENTATION.md` for the new Partner role, approval, service fulfilment configuration, privacy-safe dispatch/acceptance flow, partner payout ledger, API endpoints, and deployment cautions. Partner registration is pending Admin approval and requires Partner Terms acceptance. The Partner API is implemented; dedicated polished Partner/Admin management screens and partner-technician team invitations remain follow-up UI work.
+
+## Admin Audit Log UI Bug Fix (2026-10-31)
+- Audit entries now display the HTTP method, response status, timestamp, endpoint, and actor ID in separate readable rows.
+- Long API paths and identifiers wrap safely on narrow screens instead of overflowing or running together.
+- Audit Log loading failures now show an explicit error with Retry; they are no longer presented as an empty log.
+- Added a dedicated Refresh Logs action. Existing audit API and stored records are unchanged.
+
+## CMS frontend theme presets
+
+The CMS Website Settings screen includes four public-site appearance presets: Classic Original (the existing default), Ocean Blue, Emerald Fresh, and Sunset Warm. Select a preset and choose **Publish Theme** to save the active preset in MongoDB (`siteContent` document `_id: frontendTheme`). The public client reads `/api/site-theme` and applies the published preset to the public frontend. Admin and partner workspaces are intentionally excluded from public theme styling. Existing page content, booking, authentication, dashboard, and operational APIs are unchanged.

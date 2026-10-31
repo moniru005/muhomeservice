@@ -219,6 +219,7 @@ export default function CMSPage() {
     [media, setMedia] = useState([]),
     [services, setServices] = useState([]),
     [packages, setPackages] = useState([]),
+    [activeTheme, setActiveTheme] = useState("classic"),
     [notice, setNotice] = useState(""),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false),
@@ -255,6 +256,7 @@ export default function CMSPage() {
       setMedia(d.media || []);
       setServices(d.services || []);
       setPackages(d.packages || []);
+      setActiveTheme(d.theme?.activeTheme || "classic");
       setError("");
     } catch (e) {
       setError(e.message);
@@ -1725,6 +1727,39 @@ export default function CMSPage() {
             </section>
           )}
           {tab === "settings" && (
+            <>
+            <section className="pro-card pro-settings-card pro-theme-settings">
+              <div className="pro-card-heading">
+                <div>
+                  <span className="pro-card-kicker">FRONTEND APPEARANCE</span>
+                  <h2>Ready-made website themes</h2>
+                  <p>Select a design and publish it to update the public website in one click.</p>
+                </div>
+                <Globe size={20} />
+              </div>
+              <div className="pro-theme-grid">
+                {[
+                  {id:"classic",name:"Classic Original",desc:"The current MU Home Service navy and lime look.",colors:["#0b2340","#c7f36b","#f5f8fa"]},
+                  {id:"ocean",name:"Ocean Blue",desc:"Clean blue gradients with a bright, professional feel.",colors:["#123b70","#35b6d8","#eef6ff"]},
+                  {id:"emerald",name:"Emerald Fresh",desc:"Fresh green accents and calm, nature-inspired surfaces.",colors:["#123c35","#a7e6bd","#f0faf5"]},
+                  {id:"sunset",name:"Sunset Warm",desc:"Warm terracotta accents with soft cream backgrounds.",colors:["#542d2b","#ffb36b","#fff7ef"]}
+                ].map((theme) => (
+                  <button type="button" key={theme.id} className={`pro-theme-option ${activeTheme===theme.id?"selected":""}`} onClick={()=>setActiveTheme(theme.id)} aria-pressed={activeTheme===theme.id}>
+                    <span className={`pro-theme-preview theme-preview-${theme.id}`}>
+                      <i /><i /><i />
+                      <b />
+                    </span>
+                    <span className="pro-theme-option-copy"><b>{theme.name}</b><small>{theme.desc}</small></span>
+                    <span className="pro-theme-swatches">{theme.colors.map(c=><i key={c} style={{background:c}} />)}</span>
+                    {activeTheme===theme.id && <span className="pro-theme-selected"><CheckCircle2 size={14}/> Selected</span>}
+                  </button>
+                ))}
+              </div>
+              <div className="pro-theme-publish-row">
+                <span><ShieldCheck size={16}/> The selected theme applies to the public website, not the Admin workspace.</span>
+                <button className="pro-button pro-button-blue" disabled={busy} onClick={async()=>{setBusy(true);setError("");setNotice("");try{const d=await api("/admin/cms/theme",{method:"PUT",body:JSON.stringify({activeTheme})});setActiveTheme(d.theme?.activeTheme||activeTheme);setNotice("Website theme published successfully. The public frontend will use this theme now.");}catch(e){setError(e.message);}finally{setBusy(false);}}}><Globe size={15}/>{busy?"Publishing…":"Publish Theme"}</button>
+              </div>
+            </section>
             <section className="pro-card pro-settings-card">
               <div className="pro-card-heading">
                 <div>
@@ -1793,6 +1828,7 @@ export default function CMSPage() {
                 Reset defaults
               </button>
             </section>
+            </>
           )}
           <footer className="pro-footer">
             <span>© {new Date().getFullYear()} MU Home Service</span>

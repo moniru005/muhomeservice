@@ -389,7 +389,7 @@ export function AdminPage() {
           <button type="button" role="tab" aria-selected={adminOpsTab === "customers"} className={`admin-operations-tab${adminOpsTab === "customers" ? " is-active" : ""}`} onClick={() => setAdminOpsTab("customers")}>Customer Directory</button>
         </div>
         {adminOpsTab === "commission" && (
-        <div className="admin-table-card" style={{marginBottom:18}}>
+        <div className="admin-table-card admin-commission-panel" style={{marginBottom:18}}>
           <div className="table-toolbar"><div><h2>Technician Commission Rate</h2><p>প্রতিটি Technician-এর কমিশন হার Admin এখান থেকে নিয়ন্ত্রণ করতে পারবেন।</p></div></div>
           <div className="table-scroll"><table className="bookings-table"><thead><tr><th>Technician</th><th>Skills / Area</th><th>Commission %</th><th>Action</th></tr></thead><tbody>
             {commissionTechnicians.map(t=><tr key={t._id}><td><b>{t.name}</b><small style={{display:'block'}}>{t.phone||t.email||''}</small></td><td>{(t.skills||[]).join(', ')||'—'} <small style={{display:'block'}}>{(t.serviceAreas||[]).join(', ')||'Area not set'}</small></td><td><input aria-label={`${t.name} commission rate`} type="number" min="0" max="100" step="0.25" defaultValue={Number(t.commissionRate||0)} id={`commission-${t._id}`} style={{width:100,padding:8,border:'1px solid #dce3ea',borderRadius:8}} /></td><td><button className="btn btn-primary btn-small" onClick={async()=>{try{const input=document.getElementById(`commission-${t._id}`);await api(`/admin/technicians/${t._id}/commission`,{method:'PATCH',body:JSON.stringify({commissionRate:Number(input.value)})});setNotice(`${t.name}-এর commission rate আপডেট হয়েছে।`);await refresh()}catch(e){setError(e.message)}}}>Save rate</button></td></tr>)}
@@ -398,21 +398,21 @@ export function AdminPage() {
         </div>
         )}
         {adminOpsTab === "payments" && (
-        <div className="admin-table-card" style={{marginBottom:18}}>
+        <div className="admin-table-card admin-payments-panel" style={{marginBottom:18}}>
           <div className="table-toolbar"><div><h2>Online Payments & Refunds</h2><p>Refund request তৈরি করুন এবং Provider-side refund যাচাইয়ের পরে status আপডেট করুন।</p></div></div>
           <div className="table-scroll"><table className="bookings-table"><thead><tr><th>Payment</th><th>Booking</th><th>Amount</th><th>Status</th><th>Refund</th></tr></thead><tbody>
             {onlinePayments.map(p=><tr key={p.paymentId}><td><b>{p.paymentId}</b><small style={{display:'block'}}>{p.providerTransactionId||'No provider ref'}</small></td><td>{p.ticketId}</td><td>৳{Number(p.amount||0).toLocaleString('en-BD')}</td><td>{p.status}</td><td><button className="btn btn-outline btn-small" disabled={p.status!=='paid'} onClick={async()=>{const amount=window.prompt('Refund amount (BDT)',String(p.amount));if(!amount)return;const reason=window.prompt('Refund reason');if(!reason)return;try{await api('/admin/refunds',{method:'POST',body:JSON.stringify({paymentId:p.paymentId,amount:Number(amount),reason})});setNotice('Refund request রেকর্ড হয়েছে; provider refund এখনো আলাদাভাবে process করতে হবে।');await refresh()}catch(e){setError(e.message)}}}>Request refund</button></td></tr>)}
             {!onlinePayments.length&&<tr><td colSpan="5">Online payment record পাওয়া যায়নি।</td></tr>}
           </tbody></table></div>
-          <div className="table-scroll" style={{marginTop:16}}><table className="bookings-table"><thead><tr><th>Refund ID</th><th>Ticket</th><th>Amount</th><th>Reason</th><th>Status / Review</th></tr></thead><tbody>{refundRequests.map(r=><tr key={r.refundId}><td>{r.refundId}</td><td>{r.ticketId||r.bookingId}</td><td>৳{Number(r.amount||0).toLocaleString('en-BD')}</td><td>{r.reason}</td><td><div style={{display:'flex',gap:6,alignItems:'center',flexWrap:'wrap'}}><span>{r.status}</span>{['requested','approved','reconciliation_required'].includes(r.status)&&<><button className="btn btn-outline btn-small" onClick={async()=>{try{await api(`/admin/refunds/${r.refundId}`,{method:'PATCH',body:JSON.stringify({status:'approved'})});setNotice('Refund approved; provider-side refund execute করে reference সংরক্ষণ করুন।');await refresh()}catch(e){setError(e.message)}}}>Approve</button><button className="btn btn-outline btn-small" onClick={async()=>{try{await api(`/admin/refunds/${r.refundId}`,{method:'PATCH',body:JSON.stringify({status:'rejected',reviewNote:'Rejected by admin'})});await refresh()}catch(e){setError(e.message)}}}>Reject</button><button className="btn btn-primary btn-small" onClick={async()=>{if(!window.confirm('Provider-এর refund API কল করে refund process করবেন?'))return;try{const result=await api(`/admin/refunds/${r.refundId}/process`,{method:'POST',body:JSON.stringify({})});setNotice(`Refund provider থেকে নিশ্চিত হয়েছে: ${result.providerRefundReference||''}`);await refresh()}catch(e){setError(e.message)}}}>Process provider refund</button></>}</div></td></tr>)}{!refundRequests.length&&<tr><td colSpan="5">কোনো Refund request নেই।</td></tr>}</tbody></table></div>
+          <div className="table-scroll admin-refunds-table-wrap" style={{marginTop:16}}><table className="bookings-table"><thead><tr><th>Refund ID</th><th>Ticket</th><th>Amount</th><th>Reason</th><th>Status / Review</th></tr></thead><tbody>{refundRequests.map(r=><tr key={r.refundId}><td>{r.refundId}</td><td>{r.ticketId||r.bookingId}</td><td>৳{Number(r.amount||0).toLocaleString('en-BD')}</td><td>{r.reason}</td><td><div style={{display:'flex',gap:6,alignItems:'center',flexWrap:'wrap'}}><span>{r.status}</span>{['requested','approved','reconciliation_required'].includes(r.status)&&<><button className="btn btn-outline btn-small" onClick={async()=>{try{await api(`/admin/refunds/${r.refundId}`,{method:'PATCH',body:JSON.stringify({status:'approved'})});setNotice('Refund approved; provider-side refund execute করে reference সংরক্ষণ করুন।');await refresh()}catch(e){setError(e.message)}}}>Approve</button><button className="btn btn-outline btn-small" onClick={async()=>{try{await api(`/admin/refunds/${r.refundId}`,{method:'PATCH',body:JSON.stringify({status:'rejected',reviewNote:'Rejected by admin'})});await refresh()}catch(e){setError(e.message)}}}>Reject</button><button className="btn btn-primary btn-small" onClick={async()=>{if(!window.confirm('Provider-এর refund API কল করে refund process করবেন?'))return;try{const result=await api(`/admin/refunds/${r.refundId}/process`,{method:'POST',body:JSON.stringify({})});setNotice(`Refund provider থেকে নিশ্চিত হয়েছে: ${result.providerRefundReference||''}`);await refresh()}catch(e){setError(e.message)}}}>Process provider refund</button></>}</div></td></tr>)}{!refundRequests.length&&<tr><td colSpan="5">কোনো Refund request নেই।</td></tr>}</tbody></table></div>
         </div>
         )}
         {adminOpsTab === "customers" && (
-        <div className="admin-table-card" style={{marginBottom:18}}>
+        <div className="admin-table-card admin-customers-panel" style={{marginBottom:18}}>
           <div className="table-toolbar"><div><h2>Customer Directory</h2><p>সব Customer খুঁজুন; ফলাফল পেজ অনুযায়ী দেখানো হয়।</p></div><span>{customerPagination.total||0} customers</span></div>
           <div className="table-filters"><label className="search-box"><Search size={17}/><input value={customerQuery} onChange={e=>setCustomerQuery(e.target.value)} onKeyDown={e=>e.key==='Enter'&&(setCustomerPage(1),refresh())} placeholder="নাম, ফোন বা Email দিয়ে খুঁজুন"/></label><button className="btn btn-outline btn-small" onClick={()=>{setCustomerPage(1);refresh()}}>Search</button></div>
           <div className="table-scroll"><table className="bookings-table"><thead><tr><th>Name</th><th>Phone</th><th>Email</th><th>Account</th><th>Registered</th><th>Action</th></tr></thead><tbody>{customerDirectory.map(c=><tr key={c._id}><td>{c.name}</td><td>{c.phone||'—'}</td><td>{c.email||'—'}</td><td>{c.accountStatus||'active'}</td><td>{c.createdAt?new Date(c.createdAt).toLocaleDateString('bn-BD'):'—'}</td><td><button className="btn btn-outline btn-small" onClick={async()=>{const blocked=c.accountStatus==='disabled';const reason=window.prompt(blocked?'অ্যাকাউন্ট পুনরায় চালুর কারণ লিখুন':'অ্যাকাউন্ট ব্লক করার কারণ লিখুন');if(!reason||reason.trim().length<5)return;try{await api(`/admin/customers/${c._id}/account-status`,{method:'PATCH',body:JSON.stringify({status:blocked?'active':'blocked',reason})});setNotice(blocked?'Customer account চালু করা হয়েছে।':'Customer account ব্লক করা হয়েছে।');await refresh()}catch(e){setError(e.message)}}}>{c.accountStatus==='disabled'?'Unblock':'Block account'}</button></td></tr>)}{!customerDirectory.length&&<tr><td colSpan="6">কোনো Customer নেই।</td></tr>}</tbody></table></div>
-          <div style={{display:'flex',gap:10,alignItems:'center',justifyContent:'flex-end',marginTop:12}}><span>Page {customerPagination.page||1} / {customerPagination.pages||1}</span><button className="btn btn-outline btn-small" disabled={(customerPagination.page||1)<=1} onClick={()=>setCustomerPage(p=>Math.max(1,p-1))}>Previous</button><button className="btn btn-outline btn-small" disabled={(customerPagination.page||1)>=(customerPagination.pages||1)} onClick={()=>setCustomerPage(p=>Math.min(customerPagination.pages||1,p+1))}>Next</button></div>
+          <div className="admin-customer-pagination" style={{display:'flex',gap:10,alignItems:'center',justifyContent:'flex-end',marginTop:12}}><span>Page {customerPagination.page||1} / {customerPagination.pages||1}</span><button className="btn btn-outline btn-small" disabled={(customerPagination.page||1)<=1} onClick={()=>setCustomerPage(p=>Math.max(1,p-1))}>Previous</button><button className="btn btn-outline btn-small" disabled={(customerPagination.page||1)>=(customerPagination.pages||1)} onClick={()=>setCustomerPage(p=>Math.min(customerPagination.pages||1,p+1))}>Next</button></div>
         </div>
         )}
         {adminOpsTab === "requests" && (
@@ -940,6 +940,8 @@ export function AdminOperationsPage() {
   const [adminWorkBusy, setAdminWorkBusy] = useState(false);
   const [leaveReviewNotes, setLeaveReviewNotes] = useState({});
   const [auditLogs, setAuditLogs] = useState([]);
+  const [auditLogsError, setAuditLogsError] = useState("");
+  const [auditLogsLoading, setAuditLogsLoading] = useState(false);
   const [manualCompletion, setManualCompletion] = useState({ bookingId: "", reason: "" });
   const [partnerDispatch, setPartnerDispatch] = useState({ bookingId: "", partnerIds: [] });
   const [serviceFulfilment, setServiceFulfilment] = useState({ serviceId: "", fulfilment: "inhouse", partnerIds: "" });
@@ -962,6 +964,18 @@ export function AdminOperationsPage() {
     if (!r.ok) throw new Error(d.message || "Request failed");
     return d;
   }
+  async function loadAuditLogs() {
+    setAuditLogsLoading(true);
+    setAuditLogsError("");
+    try {
+      const result = await request("/admin/audit-logs?limit=100");
+      setAuditLogs(Array.isArray(result.logs) ? result.logs : []);
+    } catch (e) {
+      setAuditLogsError(e.message || "Audit Log could not be loaded.");
+    } finally {
+      setAuditLogsLoading(false);
+    }
+  }
   async function load() {
     setError("");
     try {
@@ -976,12 +990,12 @@ export function AdminOperationsPage() {
       const docsResult = await request("/admin/partner-documents"); setPartnerDocuments(docsResult.documents || []);
       const qualityResult = await request("/admin/partner-quality"); setPartnerQuality(qualityResult || { partners: [], claims: [] }); setOnlinePayments(onlinePaymentResult || { payments: [], counts: {} }); setIntegrationConfig(integrationResult || { onlinePaymentAvailable: false, smsNotificationsEnabled: false, paymentProvider: "bkash", currency: "BDT", smsProvider: "mimsms" }); setServiceReports(reportResult.reports || []); setPartsRequests(partsResult.requests || []);
       const quotationResult = await request("/admin/quotations?limit=100"); setAdminQuotations(quotationResult.quotations || []); setQuotationPagination(quotationResult.pagination || {page:1,pages:1,total:0,limit:100});
-      const [settlementResult, leaveResult, auditResult] = await Promise.all([
+      const [settlementResult, leaveResult] = await Promise.all([
         request("/admin/partner-settlements").catch(() => ({ settlements: [] })),
         request("/admin/technician-leave-requests").catch(() => ({ requests: [] })),
-        request("/admin/audit-logs?limit=100").catch(() => ({ logs: [] })),
       ]);
-      setPartnerSettlements(settlementResult.settlements || []); setLeaveRequests(leaveResult.requests || []); setAuditLogs(auditResult.logs || []);
+      setPartnerSettlements(settlementResult.settlements || []); setLeaveRequests(leaveResult.requests || []);
+      await loadAuditLogs();
     } catch (e) {
       setError(e.message);
     }
@@ -1372,7 +1386,22 @@ export function AdminOperationsPage() {
         {tab === "leaveRequests" && (
           <>
           <section className="partner-card" style={{marginTop:20,padding:20}}><h3>SMS Failure – Admin Manual Completion</h3><p>শুধু SMS/OTP delivery ব্যর্থ হলে ব্যবহার করুন। কারণ বাধ্যতামূলক এবং প্রতিটি override Audit Log-এ সংরক্ষিত হবে।</p><div className="partner-admin-fields"><label>Booking MongoDB ID<input value={manualCompletion.bookingId} onChange={e=>setManualCompletion(v=>({...v,bookingId:e.target.value}))} placeholder="Booking ID" /></label><label>Override reason<input value={manualCompletion.reason} onChange={e=>setManualCompletion(v=>({...v,reason:e.target.value}))} placeholder="SMS gateway failed; customer verified by phone..." /></label><button className="btn btn-primary" disabled={busy||!manualCompletion.bookingId||manualCompletion.reason.trim().length<10} onClick={manualCompleteBooking}>Record Manual Completion</button></div></section>
-          <section className="partner-card" style={{marginTop:16,padding:20}}><h3>Admin Audit Log</h3><p>সর্বশেষ ১০০টি Admin mutation এবং manual completion override। Sensitive request body সংরক্ষণ করা হয় না।</p><div className="partner-admin-list">{auditLogs.map((log,i)=><article className="partner-admin-card" key={log._id||i}><b>{log.action}</b><small>{log.actorId} · HTTP {log.statusCode||"—"} · {log.createdAt?new Date(log.createdAt).toLocaleString("en-GB"):"—"}</small></article>)}{!auditLogs.length&&<div className="partner-empty">এখনো Audit Log নেই।</div>}</div></section>
+          <section className="partner-card admin-audit-section" style={{marginTop:16,padding:20}}>
+            <div className="admin-audit-heading"><div><h3>Admin Audit Log</h3><p>সর্বশেষ ১০০টি Admin mutation এবং manual completion override। Sensitive request body সংরক্ষণ করা হয় না।</p></div><button type="button" className="btn btn-outline btn-small" onClick={loadAuditLogs} disabled={auditLogsLoading}>{auditLogsLoading ? "Loading…" : "Refresh Logs"}</button></div>
+            {auditLogsError ? <div className="admin-audit-error" role="alert"><span>Audit Log লোড করা যায়নি: {auditLogsError}</span><button type="button" className="btn btn-outline btn-small" onClick={loadAuditLogs} disabled={auditLogsLoading}>Retry</button></div> : auditLogsLoading && !auditLogs.length ? <div className="partner-empty">Audit Log লোড হচ্ছে…</div> : <div className="partner-admin-list admin-audit-list">{auditLogs.map((log,i)=>{
+              const rawAction = String(log.action || "Admin action");
+              const parts = rawAction.match(/^([A-Z]+)\s+(.+)$/i);
+              const method = log.method || (parts ? parts[1].toUpperCase() : "ACTION");
+              const endpoint = log.path || (parts ? parts[2] : rawAction);
+              const timestamp = log.createdAt ? new Date(log.createdAt) : null;
+              const dateLabel = timestamp && !Number.isNaN(timestamp.getTime()) ? timestamp.toLocaleString("en-GB") : "—";
+              return <article className="partner-admin-card admin-audit-card" key={log._id || `${log.createdAt || "log"}-${i}`}>
+                <div className="admin-audit-card-top"><span className={`admin-audit-method method-${String(method).toLowerCase()}`}>{method}</span><span className={`admin-audit-status ${Number(log.statusCode) >= 400 ? "is-error" : "is-success"}`}>HTTP {log.statusCode || "—"}</span><time dateTime={timestamp && !Number.isNaN(timestamp.getTime()) ? timestamp.toISOString() : undefined}>{dateLabel}</time></div>
+                <code className="admin-audit-endpoint">{endpoint}</code>
+                <div className="admin-audit-actor"><span>Actor ID</span><code>{log.actorId || "—"}</code></div>
+              </article>;
+            })}{!auditLogs.length && <div className="partner-empty">এখনো কোনো Audit Log রেকর্ড নেই।</div>}</div>}
+          </section>
           <div className="admin-table-card"><div className="table-toolbar"><div><h2>Technician Leave Requests</h2><p>Technician-এর ছুটির আবেদন পর্যালোচনা ও অনুমোদন করুন।</p></div><button className="btn btn-outline btn-small" onClick={load}>Refresh</button></div>
             <div className="partner-admin-list">{leaveRequests.map(item=><article className="partner-admin-card" key={item.requestId}><div className="partner-admin-head"><div><b>{item.technicianName||item.technicianId}</b><small>{({casual:"Casual",sick:"Sick",emergency:"Emergency",other:"Other"})[item.leaveType]||"Leave"} · {item.startDate} → {item.endDate} · {item.durationDays||"—"} day(s) · Submitted {item.createdAt?new Date(item.createdAt).toLocaleString("en-GB"):"—"}</small><p>{item.reason}</p>{item.document&&<button className="btn btn-outline btn-small" onClick={async()=>{try{const r=await fetch(`${API}/admin/technician-leave-requests/${encodeURIComponent(item.requestId)}/document`,{headers:{Authorization:`Bearer ${token}`}});if(!r.ok)throw new Error("Document open failed");const blob=await r.blob();const url=URL.createObjectURL(blob);window.open(url,"_blank","noopener");setTimeout(()=>URL.revokeObjectURL(url),60000)}catch(e){setError(e.message)}}}>View Supporting Document · {item.document.originalName||"Attachment"}</button>}<small>Status: {item.status}{item.reviewNote?` · Admin note: ${item.reviewNote}`:""}</small></div>{item.status==="pending"&&<div className="leave-admin-review"><textarea rows="2" placeholder="Admin review comment (optional)" value={leaveReviewNotes[item.requestId]||""} onChange={e=>setLeaveReviewNotes(v=>({...v,[item.requestId]:e.target.value}))}/><div style={{display:"flex",gap:8}}><button className="btn btn-primary btn-small" disabled={busy} onClick={()=>reviewLeave(item.requestId,"approved")}>Approve</button><button className="btn btn-outline btn-small" disabled={busy} onClick={()=>reviewLeave(item.requestId,"rejected")}>Reject</button></div></div>}</div></article>)}{!leaveRequests.length&&<div className="partner-empty">কোনো Leave Request নেই।</div>}</div>
           </div>
@@ -1724,6 +1753,17 @@ export function RolePermissionsPage() {
     "mediaUploads",
     "cmsBuilder",
   ];
+  const permissionCategories = [
+    { title: "Dashboard & Account", description: "Dashboard, profile and account settings", icon: "▦", resources: ["dashboard", "profile", "users", "roles", "settings"] },
+    { title: "Bookings & Scheduling", description: "Bookings, assignments, rescheduling and completion", icon: "▣", resources: ["bookings", "assignedBookings", "ownBookings", "bookingAttachments", "bookingReschedule", "completionOtp", "attendance", "leaveRequests"] },
+    { title: "Customers & Partners", description: "Customer directory and partner operations", icon: "♙", resources: ["customers", "customerDirectory", "partners", "staffApproval", "technicianManagement", "technicianSkills", "serviceAreas"] },
+    { title: "Services & Quotations", description: "Service catalogue, quotations and templates", icon: "◇", resources: ["services", "servicePhotos", "quotations", "ownQuotations", "quotationTemplates"] },
+    { title: "Payments & Finance", description: "Payments, earnings, commissions, refunds and reconciliation", icon: "৳", resources: ["payments", "ownPayments", "earnings", "invoices", "receipts", "commissionRates", "refunds", "finance", "paymentReconciliation"] },
+    { title: "Inventory & Field Operations", description: "Inventory, parts and service reports", icon: "⚙", resources: ["inventory", "serviceReports", "partsRequests"] },
+    { title: "Support & Claims", description: "Warranty claims and customer complaints", icon: "♡", resources: ["warrantyClaims", "complaints"] },
+    { title: "Content & Media", description: "Pages, media library and CMS builder", icon: "▤", resources: ["pages", "media", "mediaUploads", "cmsBuilder"] },
+    { title: "Reports & Notifications", description: "Reports and customer/staff notifications", icon: "◉", resources: ["reports", "notifications", "whatsappNotifications"] },
+  ];
   const actions = [
     "read",
     "create",
@@ -1830,7 +1870,7 @@ export function RolePermissionsPage() {
         </div>
         {error && <div className="alert error">{error}</div>}
         {notice && <div className="alert success">{notice}</div>}
-        <div className="admin-table-card" style={{ padding: 24 }}>
+        <div className="admin-table-card permission-manager-card" style={{ padding: 24 }}>
           <label>
             Role নির্বাচন
             <select value={role} onChange={(e) => choose(e.target.value)}>
@@ -1847,53 +1887,44 @@ export function RolePermissionsPage() {
             প্রতিটি Resource-এর জন্য অনুমতি নির্বাচন করুন। পরিবর্তন Backend-এ
             সংরক্ষিত হবে।
           </p>
-          <div className="table-scroll">
-            <table className="bookings-table">
-              <thead>
-                <tr>
-                  <th>Module / Resource</th>
-                  {actions.map((a) => (
-                    <th key={a}>{a}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {resources.map((resource) => (
-                  <tr key={resource}>
-                    <td>
-                      <b>{resource}</b>
-                    </td>
-                    {actions.map((action) => (
-                      <td key={action}>
-                        <input
-                          aria-label={`${resource} ${action}`}
-                          type="checkbox"
-                          checked={
-                            (permissions[resource] || []).includes(action) ||
-                            (permissions[resource] || []).includes("*")
-                          }
-                          onChange={(e) =>
-                            toggle(resource, action, e.target.checked)
-                          }
-                        />
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="permission-category-list">
+            {permissionCategories.map((category, index) => {
+              const categoryResources = category.resources.filter(resource => resources.includes(resource));
+              const enabledCount = categoryResources.reduce((count, resource) => count + (permissions[resource] || []).length, 0);
+              const totalCount = categoryResources.length * actions.length;
+              return (
+                <details className="permission-category" key={category.title} open={index === 0}>
+                  <summary className="permission-category-summary">
+                    <span className="permission-category-icon" aria-hidden="true">{category.icon}</span>
+                    <span className="permission-category-copy"><strong>{category.title}</strong><small>{category.description}</small></span>
+                    <span className="permission-category-count">{enabledCount} / {totalCount} enabled</span>
+                    <ChevronDown className="permission-category-chevron" size={18} />
+                  </summary>
+                  <div className="permission-category-body">
+                    <div className="permission-table-scroll">
+                      <table className="permission-matrix">
+                        <thead><tr><th>Module / Resource</th>{actions.map(action => <th key={action}>{action === "*" ? "All" : action}</th>)}</tr></thead>
+                        <tbody>{categoryResources.map(resource => (
+                          <tr key={resource}>
+                            <th scope="row">{resource}</th>
+                            {actions.map(action => (
+                              <td key={action}><input aria-label={`${resource} ${action}`} type="checkbox" checked={(permissions[resource] || []).includes(action) || (permissions[resource] || []).includes("*")} onChange={e => toggle(resource, action, e.target.checked)} /></td>
+                            ))}
+                          </tr>
+                        ))}</tbody>
+                      </table>
+                    </div>
+                  </div>
+                </details>
+              );
+            })}
           </div>
-          <div style={{ display: "flex", gap: 12, marginTop: 20 }}>
-            <button
-              className="btn btn-primary"
-              disabled={busy || role === "admin"}
-              onClick={save}
-            >
-              {busy ? "Saving…" : "Save Permissions"}
-            </button>
-            <button className="btn btn-outline" onClick={load}>
-              Reload
-            </button>
+          <div className="permission-save-bar">
+            <span>Changes are saved to the server for the selected role.</span>
+            <div>
+              <button className="btn btn-outline" onClick={load} disabled={busy}>Reload</button>
+              <button className="btn btn-primary" disabled={busy || role === "admin"} onClick={save}>{busy ? "Saving…" : "Save Permissions"}</button>
+            </div>
           </div>
         </div>
         <div className="admin-table-card" style={{ padding: 24, marginTop: 20 }}>

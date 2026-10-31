@@ -115,6 +115,15 @@ app.get("/api/services", async (_req, res, next) => {
     next(e);
   }
 });
+app.get("/api/site-theme", async (_req, res, next) => {
+  try {
+    const saved = await getDB().collection("siteContent").findOne({ _id: "frontendTheme" });
+    const allowed = new Set(["classic", "ocean", "emerald", "sunset"]);
+    const activeTheme = allowed.has(saved?.activeTheme) ? saved.activeTheme : "classic";
+    res.set("Cache-Control", "no-store");
+    res.json({ activeTheme });
+  } catch (e) { next(e); }
+});
 app.get("/api/packages", async (_req, res, next) => {
   try {
     const saved = await getDB()
