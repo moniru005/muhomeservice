@@ -1864,7 +1864,7 @@ function CMSBookingsPanel() {
   }, [status]);
   const updateStatus = async (id, next) => {
     try {
-      await api(`/admin/bookings/${id}/status`, {
+      await api(`/bookings/${id}/status`, {
         method: "PATCH",
         body: JSON.stringify({ status: next }),
       });

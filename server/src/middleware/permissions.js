@@ -2,7 +2,7 @@ import { getDB } from '../db.js';
 
 export const DEFAULT_ROLE_PERMISSIONS = Object.freeze({
   admin: { '*': ['*'] },
-  staff: { dashboard: ['read'], bookings: ['read', 'update', 'assign', 'status'], customers: ['read'], services: ['read'], quotations: ['read', 'create', 'update'], payments: ['read', 'create'], inventory: ['read', 'create', 'update', 'delete'], reports: ['read'] },
+  staff: { dashboard: ['read'], bookings: ['read', 'update', 'assign', 'status'], customers: ['read'], services: ['read'], quotations: ['read', 'create', 'update'], payments: ['read'], inventory: ['read', 'create', 'update'], partners: ['read'], reports: ['read'] },
   partner: { dashboard: ['read'], partnerBookings: ['read', 'update'], partnerProfile: ['read', 'update'], partnerReports: ['create'], partnerEarnings: ['read'] },
   'partner-technician': { dashboard: ['read'], partnerBookings: ['read', 'update'], partnerReports: ['create'] },
   technician: { dashboard: ['read'], assignedBookings: ['read', 'update'], profile: ['read', 'update'], earnings: ['read'], servicePhotos: ['create'] },

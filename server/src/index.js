@@ -598,7 +598,7 @@ app.patch("/api/admin/inventory/:id", requireAdminOrStaffPermission("manageInven
     next(e);
   }
 });
-app.delete("/api/admin/inventory/:id", requireAdminOrStaffPermission("manageInventory"), async (req, res, next) => {
+app.delete("/api/admin/inventory/:id", requireAdmin, async (req, res, next) => {
   try {
     const { ObjectId } = await import("mongodb");
     if (!ObjectId.isValid(req.params.id))

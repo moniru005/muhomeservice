@@ -56,6 +56,24 @@ const API = (
 import { fallbackServices, fallbackPackages, money } from "../models/catalog.js";
 import { useSiteContent } from "../hooks/useSiteContent.js";
 
+// Group saved service-area values by district, while omitting division names.
+function groupTechnicianServiceAreas(serviceAreas = []) {
+  const grouped = new Map();
+  for (const value of Array.isArray(serviceAreas) ? serviceAreas : []) {
+    const parts = String(value || "").split(",").map(part => part.trim()).filter(Boolean);
+    if (!parts.length) continue;
+
+    // Stored values use "Area, District, Division". Also support the older
+    // two-part "Area, District" format and plain area values.
+    const area = parts[0];
+    const district = parts.length >= 2 ? parts[1] : "অন্যান্য";
+    if (!grouped.has(district)) grouped.set(district, []);
+    const districtAreas = grouped.get(district);
+    if (!districtAreas.includes(area)) districtAreas.push(area);
+  }
+  return Array.from(grouped, ([district, areas]) => ({ district, areas }));
+}
+
 
 export function AdminPage() {
   const [token, setToken] = useState(
@@ -168,7 +186,7 @@ export function AdminPage() {
   }
   async function updateStatus(id, status) {
     try {
-      await api(`/admin/bookings/${id}/status`, {
+      await api(`/bookings/${id}/status`, {
         method: "PATCH",
         body: JSON.stringify({ status }),
       });
@@ -393,7 +411,7 @@ export function AdminPage() {
         <div className="admin-table-card" style={{marginBottom:18}}>
           <div className="table-toolbar"><div><h2>Customer Directory</h2><p>সব Customer খুঁজুন; ফলাফল পেজ অনুযায়ী দেখানো হয়।</p></div><span>{customerPagination.total||0} customers</span></div>
           <div className="table-filters"><label className="search-box"><Search size={17}/><input value={customerQuery} onChange={e=>setCustomerQuery(e.target.value)} onKeyDown={e=>e.key==='Enter'&&(setCustomerPage(1),refresh())} placeholder="নাম, ফোন বা Email দিয়ে খুঁজুন"/></label><button className="btn btn-outline btn-small" onClick={()=>{setCustomerPage(1);refresh()}}>Search</button></div>
-          <div className="table-scroll"><table className="bookings-table"><thead><tr><th>Name</th><th>Phone</th><th>Email</th><th>Account</th><th>Registered</th></tr></thead><tbody>{customerDirectory.map(c=><tr key={c._id}><td>{c.name}</td><td>{c.phone||'—'}</td><td>{c.email||'—'}</td><td>{c.accountStatus||'active'}</td><td>{c.createdAt?new Date(c.createdAt).toLocaleDateString('bn-BD'):'—'}</td></tr>)}{!customerDirectory.length&&<tr><td colSpan="5">কোনো Customer নেই।</td></tr>}</tbody></table></div>
+          <div className="table-scroll"><table className="bookings-table"><thead><tr><th>Name</th><th>Phone</th><th>Email</th><th>Account</th><th>Registered</th><th>Action</th></tr></thead><tbody>{customerDirectory.map(c=><tr key={c._id}><td>{c.name}</td><td>{c.phone||'—'}</td><td>{c.email||'—'}</td><td>{c.accountStatus||'active'}</td><td>{c.createdAt?new Date(c.createdAt).toLocaleDateString('bn-BD'):'—'}</td><td><button className="btn btn-outline btn-small" onClick={async()=>{const blocked=c.accountStatus==='disabled';const reason=window.prompt(blocked?'অ্যাকাউন্ট পুনরায় চালুর কারণ লিখুন':'অ্যাকাউন্ট ব্লক করার কারণ লিখুন');if(!reason||reason.trim().length<5)return;try{await api(`/admin/customers/${c._id}/account-status`,{method:'PATCH',body:JSON.stringify({status:blocked?'active':'blocked',reason})});setNotice(blocked?'Customer account চালু করা হয়েছে।':'Customer account ব্লক করা হয়েছে।');await refresh()}catch(e){setError(e.message)}}}>{c.accountStatus==='disabled'?'Unblock':'Block account'}</button></td></tr>)}{!customerDirectory.length&&<tr><td colSpan="6">কোনো Customer নেই।</td></tr>}</tbody></table></div>
           <div style={{display:'flex',gap:10,alignItems:'center',justifyContent:'flex-end',marginTop:12}}><span>Page {customerPagination.page||1} / {customerPagination.pages||1}</span><button className="btn btn-outline btn-small" disabled={(customerPagination.page||1)<=1} onClick={()=>setCustomerPage(p=>Math.max(1,p-1))}>Previous</button><button className="btn btn-outline btn-small" disabled={(customerPagination.page||1)>=(customerPagination.pages||1)} onClick={()=>setCustomerPage(p=>Math.min(customerPagination.pages||1,p+1))}>Next</button></div>
         </div>
         )}
@@ -873,6 +891,7 @@ export function TicketTrackingPage() {
 
 export function AdminOperationsPage() {
   const [tab, setTab] = useState(() => new URLSearchParams(window.location.search).get("tab") || "overview"),
+    [openAdminMenu, setOpenAdminMenu] = useState(""),
     [data, setData] = useState({
       technicians: [],
       staff: [],
@@ -916,9 +935,13 @@ export function AdminOperationsPage() {
   const [partnerQuality, setPartnerQuality] = useState({ partners: [], claims: [] });
   const [partnerSettlements, setPartnerSettlements] = useState([]);
   const [leaveRequests, setLeaveRequests] = useState([]);
+  const [workPreferenceTech, setWorkPreferenceTech] = useState(null);
+  const [adminWorkPreferences, setAdminWorkPreferences] = useState({skills:[],areas:[]});
+  const [adminWorkBusy, setAdminWorkBusy] = useState(false);
+  const [leaveReviewNotes, setLeaveReviewNotes] = useState({});
   const [auditLogs, setAuditLogs] = useState([]);
   const [manualCompletion, setManualCompletion] = useState({ bookingId: "", reason: "" });
-  const [partnerDispatch, setPartnerDispatch] = useState({ bookingId: "", partnerId: "" });
+  const [partnerDispatch, setPartnerDispatch] = useState({ bookingId: "", partnerIds: [] });
   const [serviceFulfilment, setServiceFulfilment] = useState({ serviceId: "", fulfilment: "inhouse", partnerIds: "" });
   const [settlementEdits, setSettlementEdits] = useState({});
   const [payoutAmountEdits, setPayoutAmountEdits] = useState({});
@@ -972,7 +995,7 @@ export function AdminOperationsPage() {
   }, [partnerFilter]);
   async function sendPartnerOffer() {
     setBusy(true); setError("");
-    try { await request(`/admin/bookings/${partnerDispatch.bookingId}/partner-offers`, { method: "POST", body: JSON.stringify({ partnerId: partnerDispatch.partnerId }) }); setNotice("Partner offer পাঠানো হয়েছে।"); setPartnerDispatch({ bookingId: "", partnerId: "" }); await load(); }
+    try { await request(`/admin/bookings/${partnerDispatch.bookingId}/partner-offers`, { method: "POST", body: JSON.stringify({ partnerIds: partnerDispatch.partnerIds }) }); setNotice("নির্বাচিত Partner-দের কাছে offer পাঠানো হয়েছে।"); setPartnerDispatch({ bookingId: "", partnerIds: [] }); await load(); }
     catch (e) { setError(e.message); } finally { setBusy(false); }
   }
   async function saveServiceFulfilment() {
@@ -1000,7 +1023,7 @@ export function AdminOperationsPage() {
   }
   async function reviewLeave(requestId, status) {
     setBusy(true); setError("");
-    try { await request(`/admin/technician-leave-requests/${encodeURIComponent(requestId)}`, { method: "PATCH", body: JSON.stringify({ status }) }); setNotice(`Leave request ${status} হয়েছে।`); await load(); }
+    try { await request(`/admin/technician-leave-requests/${encodeURIComponent(requestId)}`, { method: "PATCH", body: JSON.stringify({ status, reviewNote: leaveReviewNotes[requestId] || "" }) }); setNotice(`Leave request ${status} হয়েছে।`); await load(); }
     catch (e) { setError(e.message); } finally { setBusy(false); }
   }
   async function updatePartnerStatus(partner, status) {
@@ -1012,6 +1035,16 @@ export function AdminOperationsPage() {
     const edit=partnerEdits[partner._id]||{}; setBusy(true); setError("");
     try { await request(`/admin/partners/${partner._id}/profile`, {method:"PATCH", body:JSON.stringify({serviceIds:(edit.serviceIds??partner.partnerProfile?.serviceIds?.join(",")??"").split(",").map(x=>x.trim()).filter(Boolean),serviceAreas:(edit.serviceAreas??partner.partnerProfile?.serviceAreas?.join(",")??"").split(",").map(x=>x.trim()).filter(Boolean),commissionRate:Number(edit.commissionRate??partner.partnerCommissionRate??0)})}); setNotice("Partner service coverage ও commission সংরক্ষণ হয়েছে।"); await load(); }
     catch(e){setError(e.message);} finally{setBusy(false);}
+  }
+  async function openTechnicianWorkPreferences(technician) {
+    setError("");
+    try { const d=await request(`/admin/technicians/${technician._id}/work-preferences`); setWorkPreferenceTech(technician); setAdminWorkPreferences({skills:d.skills||[],areas:d.areas||[]}); }
+    catch(e){setError(e.message);}
+  }
+  async function saveTechnicianWorkPreferences(e) {
+    e.preventDefault(); if(!workPreferenceTech)return; setAdminWorkBusy(true); setError("");
+    try { const d=await request(`/admin/technicians/${workPreferenceTech._id}/work-preferences`,{method:"PATCH",body:JSON.stringify(adminWorkPreferences)}); setAdminWorkPreferences({skills:d.skills||[],areas:d.areas||[]}); setWorkPreferenceTech(null); setNotice(d.message||"Technician preferences updated."); await load(); }
+    catch(e){setError(e.message);} finally{setAdminWorkBusy(false);}
   }
   async function addFinance(e) {
     e.preventDefault();
@@ -1174,31 +1207,39 @@ export function AdminOperationsPage() {
         </div>
         {error && <div className="alert error">{error}</div>}
         {notice && <div className="alert success">{notice}</div>}
-        <div className="editor-tabs">
-          {[
-            ["overview", "Overview & Reports"],
-            ["technicians", `Technician Management${data.technicians.filter(t => (t.technicianStatus || t.accountStatus || "pending") === "pending").length ? ` (${data.technicians.filter(t => (t.technicianStatus || t.accountStatus || "pending") === "pending").length})` : ""}`],
-            ["staff", `Staff Account Approval${data.staff.filter(m => (m.accountStatus || "pending") === "pending").length ? ` (${data.staff.filter(m => (m.accountStatus || "pending") === "pending").length})` : ""}`],
-            ["partners", "Partner Management"],
-            ["partnerQuality", "Partner Performance & Quality"],
-            ["leaveRequests", "Technician Leave Approval"],
-            ["finance", "আয়-ব্যয়"],
-            ["payments", "Booking Payments"],
-            ["quotations", "Quotations"],
-            ["inventory", "Inventory"],
-          ].map(([v, l]) => (
-            <button
-              key={v}
-              className={`btn ${tab === v ? "btn-primary" : "btn-outline"}`}
-              onClick={() => setTab(v)}
-            >
-              {l}
+        <nav className="editor-tabs admin-management-nav" aria-label="Admin management sections">
+          <button
+            type="button"
+            className={`btn ${tab === "overview" ? "btn-primary" : "btn-outline"}`}
+            aria-current={tab === "overview" ? "page" : undefined}
+            onClick={() => { setTab("overview"); setOpenAdminMenu(""); }}
+          >Overview &amp; Reports</button>
+
+          <div className={`admin-nav-dropdown${openAdminMenu === "technician" || ["technicians", "leaveRequests"].includes(tab) ? " is-active" : ""}`}>
+            <button type="button" className={`btn ${["technicians", "leaveRequests"].includes(tab) ? "btn-primary" : "btn-outline"}`} aria-expanded={openAdminMenu === "technician"} aria-haspopup="true" onClick={() => setOpenAdminMenu(current => current === "technician" ? "" : "technician")}>
+              Technician <ChevronDown size={15} className={openAdminMenu === "technician" ? "is-rotated" : ""} />
             </button>
-          ))}
-          <button className="btn btn-outline" onClick={load}>
-            Refresh
-          </button>
-        </div>
+            {openAdminMenu === "technician" && <div className="admin-nav-submenu" role="group" aria-label="Technician submenu">
+              <button type="button" className={tab === "technicians" ? "is-selected" : ""} onClick={() => { setTab("technicians"); setOpenAdminMenu(""); }}>Technician Management{data.technicians.filter(t => (t.technicianStatus || t.accountStatus || "pending") === "pending").length ? ` (${data.technicians.filter(t => (t.technicianStatus || t.accountStatus || "pending") === "pending").length})` : ""}</button>
+              <button type="button" className={tab === "leaveRequests" ? "is-selected" : ""} onClick={() => { setTab("leaveRequests"); setOpenAdminMenu(""); }}>Technician Leave Approval</button>
+            </div>}
+          </div>
+
+          <button type="button" className={`btn ${tab === "staff" ? "btn-primary" : "btn-outline"}`} onClick={() => { setTab("staff"); setOpenAdminMenu(""); }}>Staff Account Approval{data.staff.filter(m => (m.accountStatus || "pending") === "pending").length ? ` (${data.staff.filter(m => (m.accountStatus || "pending") === "pending").length})` : ""}</button>
+
+          <div className={`admin-nav-dropdown${openAdminMenu === "partner" || ["partners", "partnerQuality"].includes(tab) ? " is-active" : ""}`}>
+            <button type="button" className={`btn ${["partners", "partnerQuality"].includes(tab) ? "btn-primary" : "btn-outline"}`} aria-expanded={openAdminMenu === "partner"} aria-haspopup="true" onClick={() => setOpenAdminMenu(current => current === "partner" ? "" : "partner")}>
+              Partner <ChevronDown size={15} className={openAdminMenu === "partner" ? "is-rotated" : ""} />
+            </button>
+            {openAdminMenu === "partner" && <div className="admin-nav-submenu" role="group" aria-label="Partner submenu">
+              <button type="button" className={tab === "partners" ? "is-selected" : ""} onClick={() => { setTab("partners"); setOpenAdminMenu(""); }}>Partner Management</button>
+              <button type="button" className={tab === "partnerQuality" ? "is-selected" : ""} onClick={() => { setTab("partnerQuality"); setOpenAdminMenu(""); }}>Partner Performance &amp; Quality</button>
+            </div>}
+          </div>
+
+          {[["finance", "আয়-ব্যয়"], ["payments", "Booking Payments"], ["quotations", "Quotations"], ["inventory", "Inventory"]].map(([value, label]) => <button key={value} type="button" className={`btn ${tab === value ? "btn-primary" : "btn-outline"}`} onClick={() => { setTab(value); setOpenAdminMenu(""); }}>{label}</button>)}
+          <button type="button" className="btn btn-outline admin-nav-refresh" onClick={load}>Refresh</button>
+        </nav>
         {tab === "overview" && (
           <>
             <div className="stats-grid management-summary-grid">
@@ -1286,6 +1327,7 @@ export function AdminOperationsPage() {
                     <th>Phone</th>
                     <th>Registration Date</th>
                     <th>Status</th>
+                    <th>Skills / Service Areas</th>
                     <th>Action</th>
                   </tr>
                 </thead>
@@ -1297,6 +1339,7 @@ export function AdminOperationsPage() {
                       <td>{t.phone || "—"}</td>
                       <td>{t.createdAt ? new Date(t.createdAt).toLocaleDateString("bn-BD") : "—"}</td>
                       <td>{t.technicianStatus || "pending"}</td>
+                      <td><div className="tech-work-summary"><small><b>Skills:</b> {(t.skills||[]).join(", ")||"—"}</small><div className="tech-service-area-summary"><b>Areas:</b>{groupTechnicianServiceAreas(t.serviceAreas).length ? groupTechnicianServiceAreas(t.serviceAreas).map(({district,areas})=><small key={district}><b>{district}:</b> {areas.join(", ")}</small>) : <small>—</small>}</div><button type="button" className="btn btn-outline btn-small" onClick={()=>openTechnicianWorkPreferences(t)}>Edit Skills / Areas</button></div></td>
                       <td>
                         <select
                           value={t.technicianStatus || "pending"}
@@ -1314,15 +1357,16 @@ export function AdminOperationsPage() {
             </div>
           </div>
         )}
+        {workPreferenceTech && <div className="leave-modal-backdrop" role="presentation" onMouseDown={e=>{if(e.target===e.currentTarget&&!adminWorkBusy)setWorkPreferenceTech(null)}}><section className="leave-modal" role="dialog" aria-modal="true"><header className="leave-modal-header"><div><span className="leave-modal-icon"><Wrench size={20}/></span><div><h2>Technician Skills & Areas</h2><p>{workPreferenceTech.name} · Admin Management</p></div></div><button type="button" className="leave-modal-close" onClick={()=>setWorkPreferenceTech(null)}><X size={20}/></button></header><form className="leave-modal-form" onSubmit={saveTechnicianWorkPreferences}><label>Skills <small>কমা দিয়ে আলাদা করুন</small><textarea rows={4} value={adminWorkPreferences.skills.join(", ")} onChange={e=>setAdminWorkPreferences(v=>({...v,skills:e.target.value.split(",").map(x=>x.trim()).filter(Boolean)}))}/></label><label>Service Areas <small>বিভাগ, জেলা ও এলাকা উল্লেখ করুন</small><textarea rows={4} value={adminWorkPreferences.areas.join(", ")} onChange={e=>setAdminWorkPreferences(v=>({...v,areas:e.target.value.split(",").map(x=>x.trim()).filter(Boolean)}))}/></label><footer className="leave-modal-actions"><button type="button" className="btn btn-outline" disabled={adminWorkBusy} onClick={()=>setWorkPreferenceTech(null)}>Cancel</button><button className="btn btn-primary" disabled={adminWorkBusy}>{adminWorkBusy?"Saving...":"Save Changes"}</button></footer></form></section></div>}
         {tab === "partners" && (
-          <div className="admin-table-card">
+          <div className="admin-table-card admin-partner-page">
             <div className="table-toolbar"><div><h2>Partner Management</h2><p>Partner আবেদন যাচাই, অনুমোদন, সার্ভিস এলাকা ও কমিশন নিয়ন্ত্রণ করুন।</p></div><div className="table-filters"><select value={partnerFilter} onChange={e=>setPartnerFilter(e.target.value)}><option value="pending">Pending</option><option value="approved">Approved</option><option value="suspended">Suspended</option><option value="rejected">Rejected</option></select><button className="btn btn-outline btn-small" onClick={load}>Refresh</button></div></div>
             <section className="partner-card" style={{marginTop:20}}><h3>Partner Document Verification</h3><p>Trade License, NID ও অন্যান্য নথি যাচাই করে সিদ্ধান্ত দিন।</p><div className="partner-admin-list">{partnerDocuments.map(doc=><article className="partner-admin-card" key={`${doc.partnerId}-${doc.documentId}`}><div className="partner-admin-head"><div><b>{doc.partnerName}</b><small>{doc.email} · {doc.type} · {doc.originalName}</small><small>Status: {doc.status}</small></div><div><button className="btn btn-outline btn-small" onClick={async()=>{try{const r=await fetch(`${API}/admin/partner-documents/${doc.partnerId}/${doc.documentId}/file`,{headers:{Authorization:`Bearer ${token}`}});if(!r.ok)throw new Error('Document open failed');const blob=await r.blob();const url=URL.createObjectURL(blob);window.open(url,'_blank','noopener');}catch(e){setError(e.message)}}}>View Document</button><select value={doc.status} onChange={async e=>{try{await request(`/admin/partner-documents/${doc.partnerId}/${doc.documentId}`,{method:'PATCH',body:JSON.stringify({status:e.target.value,reviewNote:''})});setNotice('Document verification status updated.');await load();}catch(err){setError(err.message)}}}><option value="pending">Pending</option><option value="approved">Approved</option><option value="rejected">Rejected</option></select></div></div></article>)}{!partnerDocuments.length&&<div className="partner-empty">কোনো Partner document জমা হয়নি।</div>}</div></section>
-            <section className="partner-card" style={{marginTop:20,padding:20}}><h3>Partner Job Dispatch</h3><p>Booking ID এবং অনুমোদিত Partner ID দিয়ে কাজের Offer পাঠান।</p><div className="partner-admin-fields"><label>Booking ID<input value={partnerDispatch.bookingId} onChange={e=>setPartnerDispatch(v=>({...v,bookingId:e.target.value}))} placeholder="Booking MongoDB ID" /></label><label>Partner<select value={partnerDispatch.partnerId} onChange={e=>setPartnerDispatch(v=>({...v,partnerId:e.target.value}))}><option value="">Select approved partner</option>{approvedPartners.map(p=><option key={p._id} value={p._id}>{p.partnerProfile?.businessName||p.name} — {p.email}</option>)}</select></label><button className="btn btn-primary" disabled={busy||!partnerDispatch.bookingId||!partnerDispatch.partnerId} onClick={sendPartnerOffer}>Send Partner Offer</button></div></section>
+            <section className="partner-card" style={{marginTop:20,padding:20}}><h3>Partner Job Dispatch</h3><p>Booking ID এবং অনুমোদিত Partner ID দিয়ে কাজের Offer পাঠান।</p><div className="partner-admin-fields"><label>Booking ID<input value={partnerDispatch.bookingId} onChange={e=>setPartnerDispatch(v=>({...v,bookingId:e.target.value}))} placeholder="Booking MongoDB ID" /></label><label>Partner(s)<select multiple value={partnerDispatch.partnerIds} onChange={e=>setPartnerDispatch(v=>({...v,partnerIds:Array.from(e.target.selectedOptions,o=>o.value)}))} style={{minHeight:110}}>{approvedPartners.map(p=><option key={p._id} value={p._id}>{p.partnerProfile?.businessName||p.name} — {p.email}</option>)}</select><small>একাধিক Partner নির্বাচন করতে Ctrl / Cmd চেপে নির্বাচন করুন।</small></label><button className="btn btn-primary" disabled={busy||!partnerDispatch.bookingId||!partnerDispatch.partnerIds.length} onClick={sendPartnerOffer}>Send Partner Offer</button></div></section>
             <section className="partner-card" style={{marginTop:16,padding:20}}><h3>Service Fulfilment Configuration</h3><p>সার্ভিসটি In-house, Partner অথবা Mixed পদ্ধতিতে পরিচালনা করুন। Partner/Mixed হলে অনুমোদিত Partner ID নির্বাচন করুন।</p><div className="partner-admin-fields"><label>Service ID<input value={serviceFulfilment.serviceId} onChange={e=>setServiceFulfilment(v=>({...v,serviceId:e.target.value}))} placeholder="CMS service ID" /></label><label>Fulfilment<select value={serviceFulfilment.fulfilment} onChange={e=>setServiceFulfilment(v=>({...v,fulfilment:e.target.value}))}><option value="inhouse">In-house</option><option value="partner">Partner</option><option value="mixed">Mixed</option></select></label><label>Approved Partner IDs (comma separated)<input value={serviceFulfilment.partnerIds} onChange={e=>setServiceFulfilment(v=>({...v,partnerIds:e.target.value}))} placeholder="Partner MongoDB IDs" /></label><button className="btn btn-primary" disabled={busy||!serviceFulfilment.serviceId} onClick={saveServiceFulfilment}>Save Fulfilment</button></div></section>
             <section className="partner-card" style={{marginTop:16,padding:20}}><h3>Approve Partner Payout Amount</h3><p>Partner-এর accepted/completed job-এর প্রস্তাবিত payout যাচাই করে অনুমোদন দিন। অনুমোদিত অঙ্ক Customer booking value অতিক্রম করতে পারবে না।</p><div className="partner-admin-list">{opsBookings.filter(b=>b.partnerId&&["accepted","completed"].includes(b.partnerStatus)&&!b.partnerPayout?.approvedBy).map(b=><article className="partner-admin-card" key={b._id}><div className="partner-admin-head"><div><b>{b.ticketId||b._id} · {b.serviceName}</b><small>Partner: {b.partnerId} · Proposed: {money(b.partnerPayout?.amount||0)} · Customer total: {money(b.totalAmount||b.quotedAmount||0)}</small></div><div style={{display:"flex",gap:8,flexWrap:"wrap"}}><input type="number" min="1" max={Number(b.totalAmount||b.quotedAmount||0)||undefined} placeholder="Approved amount" value={payoutAmountEdits[b._id]??b.partnerPayout?.amount??""} onChange={e=>setPayoutAmountEdits(v=>({...v,[b._id]:e.target.value}))}/><button className="btn btn-primary btn-small" disabled={busy} onClick={()=>approvePartnerPayout(b)}>Approve Amount</button></div></div></article>)}{!opsBookings.some(b=>b.partnerId&&["accepted","completed"].includes(b.partnerStatus)&&!b.partnerPayout?.approvedBy)&&<div className="partner-empty">অনুমোদনের অপেক্ষায় কোনো Partner payout নেই।</div>}</div></section>
             <section className="partner-card" style={{marginTop:16,padding:20}}><h3>Partner Settlement Approval</h3><p>Pending payout যাচাই করে Paid অথবা Rejected করুন। Paid করার আগে payment reference লিখুন।</p><div className="partner-admin-list">{partnerSettlements.map(entry=><article className="partner-admin-card" key={entry._id||entry.sourceKey}><div className="partner-admin-head"><div><b>{entry.ticketId||entry.bookingId}</b><small>Partner: {entry.partnerId} · Amount: {money(entry.amount)} · {new Date(entry.createdAt).toLocaleString("en-GB")}</small></div><div style={{display:"flex",gap:8,flexWrap:"wrap"}}><input aria-label="Payment reference" placeholder="Payment reference" value={settlementEdits[entry._id]||""} onChange={e=>setSettlementEdits(v=>({...v,[entry._id]:e.target.value}))}/><button className="btn btn-primary btn-small" disabled={busy||!settlementEdits[entry._id]} onClick={()=>settlePartner(entry,"paid")}>Mark Paid</button><button className="btn btn-outline btn-small" disabled={busy} onClick={()=>settlePartner(entry,"rejected")}>Reject</button></div></div></article>)}{!partnerSettlements.length&&<div className="partner-empty">কোনো Pending Partner Settlement নেই।</div>}</div></section>
-            <div className="partner-admin-list">{partners.map(partner=>{const edit=partnerEdits[partner._id]||{};return <article key={partner._id} className="partner-admin-card"><div className="partner-admin-head"><div><b>{partner.partnerProfile?.businessName||partner.name}</b><small>{partner.name} · {partner.email} · {partner.phone||"—"}</small></div><select value={partner.accountStatus||"pending"} disabled={busy} onChange={e=>updatePartnerStatus(partner,e.target.value)}><option value="pending">Pending</option><option value="approved">Approved</option><option value="suspended">Suspended</option><option value="rejected">Rejected</option></select></div><div className="partner-admin-fields"><label>Service IDs (comma separated)<input value={edit.serviceIds??(partner.partnerProfile?.serviceIds||[]).join(", ")} onChange={e=>setPartnerEdits(s=>({...s,[partner._id]:{...s[partner._id],serviceIds:e.target.value}}))} placeholder="ac-repair, electrical"/></label><label>Service Areas<input value={edit.serviceAreas??(partner.partnerProfile?.serviceAreas||[]).join(", ")} onChange={e=>setPartnerEdits(s=>({...s,[partner._id]:{...s[partner._id],serviceAreas:e.target.value}}))} placeholder="Chattogram, Agrabad"/></label><label>Commission / Partner Rate (%)<input type="number" min="0" max="100" value={edit.commissionRate??partner.partnerCommissionRate??0} onChange={e=>setPartnerEdits(s=>({...s,[partner._id]:{...s[partner._id],commissionRate:e.target.value}}))}/></label><button className="btn btn-primary" disabled={busy} onClick={()=>savePartnerProfile(partner)}>Save Partner Profile</button></div><small className="partner-admin-meta">Type: {partner.partnerProfile?.partnerType||"individual"} · Registered: {partner.createdAt?new Date(partner.createdAt).toLocaleDateString("en-GB"):"—"} · Rating: {partner.partnerRating||"Not rated"}</small></article>})}{!partners.length&&<div className="partner-empty">এই Status-এ কোনো Partner পাওয়া যায়নি।</div>}</div>
+            <div className="partner-admin-list partner-admin-directory">{partners.map(partner=>{const edit=partnerEdits[partner._id]||{};return <article key={partner._id} className="partner-admin-card"><div className="partner-admin-head"><div><b>{partner.partnerProfile?.businessName||partner.name}</b><small>{partner.name} · {partner.email} · {partner.phone||"—"}</small></div><select value={partner.accountStatus||"pending"} disabled={busy} onChange={e=>updatePartnerStatus(partner,e.target.value)}><option value="pending">Pending</option><option value="approved">Approved</option><option value="suspended">Suspended</option><option value="rejected">Rejected</option></select></div><div className="partner-admin-fields"><label>Service IDs (comma separated)<input value={edit.serviceIds??(partner.partnerProfile?.serviceIds||[]).join(", ")} onChange={e=>setPartnerEdits(s=>({...s,[partner._id]:{...s[partner._id],serviceIds:e.target.value}}))} placeholder="ac-repair, electrical"/></label><label>Service Areas<input value={edit.serviceAreas??(partner.partnerProfile?.serviceAreas||[]).join(", ")} onChange={e=>setPartnerEdits(s=>({...s,[partner._id]:{...s[partner._id],serviceAreas:e.target.value}}))} placeholder="Chattogram, Agrabad"/></label><label>Commission / Partner Rate (%)<input type="number" min="0" max="100" value={edit.commissionRate??partner.partnerCommissionRate??0} onChange={e=>setPartnerEdits(s=>({...s,[partner._id]:{...s[partner._id],commissionRate:e.target.value}}))}/></label><button className="btn btn-primary" disabled={busy} onClick={()=>savePartnerProfile(partner)}>Save Partner Profile</button></div><small className="partner-admin-meta">Type: {partner.partnerProfile?.partnerType||"individual"} · Registered: {partner.createdAt?new Date(partner.createdAt).toLocaleDateString("en-GB"):"—"} · Rating: {partner.partnerRating||"Not rated"}</small></article>})}{!partners.length&&<div className="partner-empty">এই Status-এ কোনো Partner পাওয়া যায়নি।</div>}</div>
           </div>
         )}
         {tab === "leaveRequests" && (
@@ -1330,7 +1374,7 @@ export function AdminOperationsPage() {
           <section className="partner-card" style={{marginTop:20,padding:20}}><h3>SMS Failure – Admin Manual Completion</h3><p>শুধু SMS/OTP delivery ব্যর্থ হলে ব্যবহার করুন। কারণ বাধ্যতামূলক এবং প্রতিটি override Audit Log-এ সংরক্ষিত হবে।</p><div className="partner-admin-fields"><label>Booking MongoDB ID<input value={manualCompletion.bookingId} onChange={e=>setManualCompletion(v=>({...v,bookingId:e.target.value}))} placeholder="Booking ID" /></label><label>Override reason<input value={manualCompletion.reason} onChange={e=>setManualCompletion(v=>({...v,reason:e.target.value}))} placeholder="SMS gateway failed; customer verified by phone..." /></label><button className="btn btn-primary" disabled={busy||!manualCompletion.bookingId||manualCompletion.reason.trim().length<10} onClick={manualCompleteBooking}>Record Manual Completion</button></div></section>
           <section className="partner-card" style={{marginTop:16,padding:20}}><h3>Admin Audit Log</h3><p>সর্বশেষ ১০০টি Admin mutation এবং manual completion override। Sensitive request body সংরক্ষণ করা হয় না।</p><div className="partner-admin-list">{auditLogs.map((log,i)=><article className="partner-admin-card" key={log._id||i}><b>{log.action}</b><small>{log.actorId} · HTTP {log.statusCode||"—"} · {log.createdAt?new Date(log.createdAt).toLocaleString("en-GB"):"—"}</small></article>)}{!auditLogs.length&&<div className="partner-empty">এখনো Audit Log নেই।</div>}</div></section>
           <div className="admin-table-card"><div className="table-toolbar"><div><h2>Technician Leave Requests</h2><p>Technician-এর ছুটির আবেদন পর্যালোচনা ও অনুমোদন করুন।</p></div><button className="btn btn-outline btn-small" onClick={load}>Refresh</button></div>
-            <div className="partner-admin-list">{leaveRequests.map(item=><article className="partner-admin-card" key={item.requestId}><div className="partner-admin-head"><div><b>{item.technicianName||item.technicianId}</b><small>{item.startDate} → {item.endDate} · Submitted {item.createdAt?new Date(item.createdAt).toLocaleString("en-GB"):"—"}</small><p>{item.reason}</p><small>Status: {item.status}</small></div>{item.status==="pending"&&<div style={{display:"flex",gap:8}}><button className="btn btn-primary btn-small" disabled={busy} onClick={()=>reviewLeave(item.requestId,"approved")}>Approve</button><button className="btn btn-outline btn-small" disabled={busy} onClick={()=>reviewLeave(item.requestId,"rejected")}>Reject</button></div>}</div></article>)}{!leaveRequests.length&&<div className="partner-empty">কোনো Leave Request নেই।</div>}</div>
+            <div className="partner-admin-list">{leaveRequests.map(item=><article className="partner-admin-card" key={item.requestId}><div className="partner-admin-head"><div><b>{item.technicianName||item.technicianId}</b><small>{({casual:"Casual",sick:"Sick",emergency:"Emergency",other:"Other"})[item.leaveType]||"Leave"} · {item.startDate} → {item.endDate} · {item.durationDays||"—"} day(s) · Submitted {item.createdAt?new Date(item.createdAt).toLocaleString("en-GB"):"—"}</small><p>{item.reason}</p>{item.document&&<button className="btn btn-outline btn-small" onClick={async()=>{try{const r=await fetch(`${API}/admin/technician-leave-requests/${encodeURIComponent(item.requestId)}/document`,{headers:{Authorization:`Bearer ${token}`}});if(!r.ok)throw new Error("Document open failed");const blob=await r.blob();const url=URL.createObjectURL(blob);window.open(url,"_blank","noopener");setTimeout(()=>URL.revokeObjectURL(url),60000)}catch(e){setError(e.message)}}}>View Supporting Document · {item.document.originalName||"Attachment"}</button>}<small>Status: {item.status}{item.reviewNote?` · Admin note: ${item.reviewNote}`:""}</small></div>{item.status==="pending"&&<div className="leave-admin-review"><textarea rows="2" placeholder="Admin review comment (optional)" value={leaveReviewNotes[item.requestId]||""} onChange={e=>setLeaveReviewNotes(v=>({...v,[item.requestId]:e.target.value}))}/><div style={{display:"flex",gap:8}}><button className="btn btn-primary btn-small" disabled={busy} onClick={()=>reviewLeave(item.requestId,"approved")}>Approve</button><button className="btn btn-outline btn-small" disabled={busy} onClick={()=>reviewLeave(item.requestId,"rejected")}>Reject</button></div></div>}</div></article>)}{!leaveRequests.length&&<div className="partner-empty">কোনো Leave Request নেই।</div>}</div>
           </div>
           </>
         )}
@@ -1479,7 +1523,7 @@ export function AdminOperationsPage() {
           </>
         )}
         {tab === "payments" && (
-          <>
+          <div className="admin-section-stack admin-payments-page">
             <form className="editor-card" onSubmit={recordPayment}>
               <h2>কাস্টমারের পেমেন্ট রেকর্ড করুন</h2>
               <p>পেমেন্ট সংরক্ষণ হলে বুকিংয়ের paid amount এবং Finance-এর Income Ledger একসঙ্গে আপডেট হবে।</p>
@@ -1495,7 +1539,7 @@ export function AdminOperationsPage() {
             <div className="admin-table-card"><h2>Booking Payment Status</h2><div className="table-scroll"><table className="bookings-table"><thead><tr><th>Ticket</th><th>Service</th><th>Status</th><th>Paid</th><th>Payment Status</th></tr></thead><tbody>{opsBookings.map(b => <tr key={b._id}><td>{b.ticketId || b._id}</td><td>{b.serviceName || "—"}</td><td>{b.status || "—"}</td><td>৳{Number(b.paidAmount || 0).toLocaleString("en-BD")}</td><td>{b.paymentStatus || (b.paidAmount ? "partial" : "unpaid")}</td></tr>)}</tbody></table></div></div>
             <div className="admin-table-card"><h2>Integration Configuration Status</h2><div className="dashboard-stats"><div className="stat-card"><span>Online Payment</span><b>{integrationConfig.onlinePaymentAvailable ? "Configured" : "Not configured"}</b></div><div className="stat-card"><span>Provider</span><b>{integrationConfig.paymentProvider}</b></div><div className="stat-card"><span>Currency</span><b>{integrationConfig.currency}</b></div><div className="stat-card"><span>SMS Provider</span><b>{integrationConfig.smsProvider || "generic"}</b></div><div className="stat-card"><span>SMS</span><b>{integrationConfig.smsNotificationsEnabled ? "Configured" : "Not configured"}</b></div></div><p>Provider credentials server-এর environment variables-এ রাখতে হবে; এই UI-তে secret দেখানো বা সংরক্ষণ করা হয় না।</p></div>
             <div className="admin-table-card"><h2>Online Payment Gateway Activity</h2><p>সর্বশেষ ১০০টি online payment। `reconciliation_required` থাকলে Provider transaction যাচাই করে reconciliation করুন; এই তালিকা থেকে সরাসরি Payment সফল করা যায় না।</p><div className="dashboard-stats" style={{marginBottom:14}}>{Object.entries(onlinePayments.counts || {}).map(([status,count])=><div className="stat-card" key={status}><span>{status}</span><b>{count}</b></div>)}</div><div className="table-scroll"><table className="bookings-table"><thead><tr><th>Payment ID</th><th>Ticket</th><th>Amount</th><th>Status</th><th>Provider Ref</th><th>Created</th><th>Note</th></tr></thead><tbody>{(onlinePayments.payments || []).map(p=><tr key={p.paymentId}><td>{p.paymentId}</td><td>{p.ticketId || p.bookingId}</td><td>{p.currency} {Number(p.amount || 0).toLocaleString("en-BD")}</td><td>{p.status}</td><td>{p.providerTransactionId || "—"}</td><td>{p.createdAt ? new Date(p.createdAt).toLocaleString("bn-BD") : "—"}</td><td>{p.reconciliationReason || "—"}</td></tr>)}{!onlinePayments.payments?.length && <tr><td colSpan="7">এখনো online payment record নেই।</td></tr>}</tbody></table></div></div>
-          </>
+          </div>
         )}
         {tab === "quotations" && (
           <div className="admin-table-card"><div className="table-toolbar"><div><h2>All Quotations</h2><p>সকল Customer-এর Quotation, সংশ্লিষ্ট Booking ও সিদ্ধান্তের Status এখানে দেখা যাবে।</p></div><span>{adminQuotations.length} / {quotationPagination.total||adminQuotations.length}</span></div><div className="table-scroll"><table className="bookings-table"><thead><tr><th>Quotation</th><th>Customer / Ticket</th><th>Service</th><th>Created</th><th>Items</th><th>Total</th><th>Status</th></tr></thead><tbody>{adminQuotations.map(q=><tr key={q.quotationId}><td>{q.quotationId}</td><td><b>{q.booking?.name||"—"}</b><small style={{display:"block"}}>{q.booking?.ticketId||q.bookingId}</small><small>{q.booking?.phone||""}</small></td><td>{q.booking?.serviceName||"—"}</td><td>{q.createdAt?new Date(q.createdAt).toLocaleString("bn-BD"):"—"}</td><td>{(q.items||[]).map(i=>`${i.description} × ${i.quantity}`).join(", ")}</td><td>৳{Number(q.total||0).toLocaleString("en-BD")}</td><td>{q.status}</td></tr>)}{!adminQuotations.length&&<tr><td colSpan="7">কোনো Quotation পাওয়া যায়নি।</td></tr>}</tbody></table></div><button className="btn btn-outline" style={{marginTop:12}} onClick={load}>Refresh quotations</button></div>
@@ -1646,6 +1690,7 @@ export function RolePermissionsPage() {
     "inventory",
     "reports",
     "customers",
+    "partners",
     "services",
     "pages",
     "media",

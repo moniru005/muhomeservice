@@ -139,10 +139,12 @@ export async function notifySmsSafely({ to, message, context = 'notification' })
   if (!to) return;
   try {
     const result = await sendConfiguredSms({ to: String(to).trim(), message: String(message).slice(0, 900) });
-    if (result.skipped) return;
+    if (result.skipped) return { success: false, skipped: true };
+    return { success: true };
   } catch (error) {
     // Notifications must never roll back a booking or payment. Do not log credentials or full payloads.
     console.error(`SMS ${context} failed:`, String(error.message).slice(0, 200));
+    return { success: false };
   }
 }
 
@@ -171,13 +173,15 @@ export function whatsappIsConfigured() {
   return Boolean(process.env.WHATSAPP_API_URL && process.env.WHATSAPP_API_TOKEN);
 }
 export async function notifyWhatsAppSafely({ to, message, context = 'notification' }) {
-  if (!to || !whatsappIsConfigured()) return;
+  if (!to || !whatsappIsConfigured()) return { success: false, skipped: true };
   try {
     const url = new URL(process.env.WHATSAPP_API_URL);
     if (process.env.NODE_ENV === 'production' && url.protocol !== 'https:') throw new Error('WhatsApp API must use HTTPS in production');
     const response = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json', Authorization:`Bearer ${process.env.WHATSAPP_API_TOKEN}`}, body:JSON.stringify({to:normalizeBdPhone(to),message:String(message).slice(0,900),context}), signal:AbortSignal.timeout(10000) });
     if (!response.ok) throw new Error(`WhatsApp provider rejected message (HTTP ${response.status})`);
+    return { success: true };
   } catch (error) {
     console.error(`WhatsApp ${context} failed:`, String(error.message).slice(0,200));
+    return { success: false };
   }
 }

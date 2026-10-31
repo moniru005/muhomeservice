@@ -116,21 +116,6 @@ router.get('/admin/bookings', requireAdmin, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-router.patch('/admin/bookings/:id/status', requireAdmin, async (req, res, next) => {
-  try {
-    if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ message: 'Invalid booking ID' });
-    const status = String(req.body.status || '');
-    if (!statuses.includes(status)) return res.status(400).json({ message: 'Invalid status' });
-    const result = await getDB().collection('bookings').updateOne({ _id: new ObjectId(req.params.id) }, { $set: { status, adminNote: String(req.body.adminNote || '').slice(0, 1000), updatedAt: new Date() } });
-    if (!result.matchedCount) return res.status(404).json({ message: 'Booking not found' });
-    const updatedBooking = await getDB().collection('bookings').findOne({ _id: new ObjectId(req.params.id) }, { projection: { phone:1, ticketId:1, status:1 } });
-    if (updatedBooking) await Promise.all([notifySmsSafely({ to: updatedBooking.phone, message: `MU Home Service: বুকিং ${updatedBooking.ticketId}-এর নতুন Status: ${status}.`, context: 'booking-status' }), notifyWhatsAppSafely({ to: updatedBooking.phone, message: `MU Home Service: বুকিং ${updatedBooking.ticketId}-এর নতুন Status: ${status}.`, context: 'booking-status' })]);
-    res.json({ message: 'Booking updated' });
-  } catch (err) { next(err); }
-});
-
-
-
 router.patch('/bookings/:id/status', requireAuth, async (req, res, next) => {
   try {
     if (req.user.role === 'staff') {
@@ -144,6 +129,7 @@ router.patch('/bookings/:id/status', requireAuth, async (req, res, next) => {
     if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ message:'Invalid booking ID' });
     const status = String(req.body.status || '');
     if (!statuses.includes(status)) return res.status(400).json({ message:'Invalid status' });
+    if (req.user.role === 'admin' && status === 'Completed') return res.status(409).json({ message:'Admin সরাসরি Completed করতে পারবেন না। Manual Completion স্ক্রিনে কারণ লিখে override করুন।' });
     const col = getDB().collection('bookings');
     const current = await col.findOne({ _id:new ObjectId(req.params.id), deletedAt: { $exists:false } });
     if (!current) return res.status(404).json({ message:'Booking not found' });
@@ -182,11 +168,23 @@ router.patch('/bookings/:id/technicians', requireAuth, async (req, res, next) =>
     if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ message: 'Invalid booking ID' });
     const ids = [...new Set((Array.isArray(req.body.technicianIds) ? req.body.technicianIds : []).map(String))];
     if (ids.some(id => !ObjectId.isValid(id))) return res.status(400).json({ message: 'Invalid technician ID' });
-    const technicians = ids.length ? await db.collection('users').find({ _id: { $in: ids.map(id => new ObjectId(id)) }, role: 'technician', technicianStatus: 'approved', accountStatus: 'approved' }, { projection: { name: 1, email: 1 } }).toArray() : [];
+    const technicians = ids.length ? await db.collection('users').find({ _id: { $in: ids.map(id => new ObjectId(id)) }, role: 'technician', technicianStatus: 'approved', accountStatus: 'approved' }, { projection: { name: 1, email: 1, skills:1, serviceAreas:1 } }).toArray() : [];
     if (technicians.length !== ids.length) return res.status(400).json({ message: 'শুধু অনুমোদিত Technician assign করা যাবে।' });
     const booking = await db.collection('bookings').findOne({ _id: new ObjectId(req.params.id) });
     if (!booking) return res.status(404).json({ message: 'Booking not found' });
     if (['Completed', 'Cancelled'].includes(booking.status) && ids.length) return res.status(409).json({ message: `এই ${booking.status} booking-এ technician assign করা যাবে না।` });
+    const norm = value => String(value || '').toLocaleLowerCase('en').replace(/[^a-z0-9\u0980-\u09ff]+/g,' ').trim();
+    const serviceText = norm(`${booking.serviceId || ''} ${booking.serviceName || ''} ${booking.service || ''}`);
+    const areaText = norm(`${booking.area || ''} ${booking.address || ''} ${booking.district || ''} ${booking.city || ''} ${booking.location || ''}`);
+    const incompatible = technicians.filter(t => {
+      const skills = (t.skills || []).map(norm).filter(Boolean);
+      const areas = (t.serviceAreas || []).map(norm).filter(Boolean);
+      const overlaps = (a,b) => { const aa=a.split(' ').filter(x=>x.length>1), bb=b.split(' ').filter(x=>x.length>1); return aa.some(x=>bb.includes(x)); };
+      const skillMatch = !skills.length || skills.some(x => serviceText.includes(x) || x.includes(serviceText) || overlaps(x,serviceText));
+      const areaMatch = !areas.length || areas.some(x => areaText.includes(x) || x.includes(areaText) || overlaps(x,areaText));
+      return !skillMatch || !areaMatch;
+    });
+    if (incompatible.length) return res.status(400).json({message:`${incompatible.map(t=>t.name).join(', ')}-এর Skills / Service Areas এই Booking-এর সঙ্গে মেলেনি। Technician-এর Work Preferences যাচাই করুন।`});
     // Assignment must not reopen or regress a booking already in progress. Only intake states advance to Assigned.
     const nextStatus = ids.length && ['New', 'Contacted'].includes(booking.status) ? 'Assigned' : booking.status;
     const result = await db.collection('bookings').updateOne({ _id: booking._id, status: booking.status }, { $set: { technicianIds: ids, technicianId: ids[0] || null, status: nextStatus, updatedAt: new Date() }, $push: { statusHistory: { status: nextStatus, at: new Date(), by: req.user.sub, byRole: req.user.role, note: 'Technician assignment updated' } } });
