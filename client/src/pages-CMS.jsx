@@ -191,6 +191,38 @@ const navGroups = [
     ],
   },
 ];
+const settingsSections = [
+  { id: "identity", title: "Site Identity", description: "Website name, logo, favicon and brand identity", fields: [
+    ["siteName", "Website name", "text"], ["siteUrl", "Website URL", "url"], ["tagline", "Website tagline", "text"], ["logoUrl", "Logo URL", "url"], ["darkLogoUrl", "Dark logo URL", "url"], ["faviconUrl", "Favicon URL", "url"], ["language", "Default language", "text"], ["timezone", "Timezone", "text"], ["copyright", "Copyright text", "text"], ["accent", "Brand accent colour", "color"]
+  ]},
+  { id: "business", title: "Business Information", description: "Public contact details and business hours", fields: [
+    ["businessName", "Business name", "text"], ["phone", "Primary phone", "tel"], ["secondaryPhone", "Secondary phone", "tel"], ["email", "Support email", "email"], ["address", "Business address", "text"], ["mapsUrl", "Google Maps URL", "url"], ["whatsapp", "WhatsApp number", "tel"], ["businessHours", "Business hours", "text"], ["emergencyService", "Emergency service available", "checkbox"]
+  ]},
+  { id: "service", title: "Service Configuration", description: "Service coverage, booking rules and charges", fields: [
+    ["serviceAreas", "Service coverage areas", "textarea"], ["minimumBooking", "Minimum booking amount", "number"], ["bookingAdvance", "Booking advance amount / %", "text"], ["advanceType", "Advance type (fixed / percentage)", "text"], ["cancellationPolicy", "Cancellation policy", "textarea"], ["reschedulePolicy", "Reschedule policy", "textarea"], ["taxRate", "Tax / VAT (%)", "number"], ["emergencyFee", "Emergency service fee", "number"], ["serviceGuarantee", "Service guarantee", "text"], ["bookingConfirmation", "Booking confirmation (manual / auto)", "text"]
+  ]},
+  { id: "appearance", title: "Appearance", description: "Global frontend display preferences", fields: [
+    ["defaultTheme", "Default appearance (light / dark)", "text"], ["headerStyle", "Header style", "text"], ["footerLayout", "Footer layout", "text"], ["stickyHeader", "Sticky header", "checkbox"], ["backToTop", "Back to top button", "checkbox"], ["preloader", "Preloader", "checkbox"], ["announcementEnabled", "Announcement bar", "checkbox"], ["announcementText", "Announcement text", "text"], ["maintenanceMode", "Maintenance mode", "checkbox"]
+  ]},
+  { id: "seo", title: "SEO & Social Media", description: "Default search engine and social sharing metadata", fields: [
+    ["metaTitle", "Default meta title", "text"], ["metaDescription", "Default meta description", "textarea"], ["ogImage", "Default social share image URL", "url"], ["analyticsId", "Google Analytics ID", "text"], ["searchConsole", "Search Console verification", "text"], ["facebook", "Facebook URL", "url"], ["instagram", "Instagram URL", "url"], ["youtube", "YouTube URL", "url"]
+  ]},
+  { id: "notifications", title: "Email & Notifications", description: "Email delivery and customer notification preferences", fields: [
+    ["smtpHost", "SMTP host", "text"], ["smtpPort", "SMTP port", "number"], ["smtpUsername", "SMTP username", "text"], ["smtpFromName", "Sender name", "text"], ["smtpFromEmail", "Sender email", "email"], ["adminNotifications", "Admin booking notifications", "checkbox"], ["bookingEmail", "Booking confirmation email", "checkbox"], ["cancellationEmail", "Cancellation email", "checkbox"], ["smsProvider", "SMS gateway provider", "text"], ["whatsappNotifications", "WhatsApp notifications", "checkbox"]
+  ]},
+  { id: "system", title: "Security & System", description: "Regional formats and operational safeguards", fields: [
+    ["currency", "Default currency (e.g. BDT)", "text"], ["dateFormat", "Date format", "text"], ["timeFormat", "Time format (12 / 24 hour)", "text"], ["sessionTimeout", "Admin session timeout (minutes)", "number"], ["loginAttemptLimit", "Login attempt limit", "number"], ["recaptchaSiteKey", "reCAPTCHA site key", "text"], ["backupNotes", "Backup configuration notes", "textarea"]
+  ]}
+];
+const defaultSiteSettings = {
+  identity: { siteName: "MU Home Service", siteUrl: "https://muhomeservice.com", tagline: "Professional Home Services", language: "বাংলা", timezone: "Asia/Dhaka", copyright: "© MU Home Service", accent: "#2563eb" },
+  business: { businessName: "MU Home Service", businessHours: "09:00 - 18:00" },
+  service: { advanceType: "fixed", bookingConfirmation: "manual" },
+  appearance: { defaultTheme: "light", stickyHeader: true, backToTop: true, preloader: false, announcementEnabled: false, maintenanceMode: false },
+  seo: {}, notifications: { adminNotifications: true, bookingEmail: true, cancellationEmail: true, whatsappNotifications: false },
+  system: { currency: "BDT", dateFormat: "DD/MM/YYYY", timeFormat: "24", sessionTimeout: 60, loginAttemptLimit: 5 }
+};
+
 function Metric({ icon: Icon, label, value, delta, color, caption }) {
   return (
     <article className="pro-metric">
@@ -234,7 +266,9 @@ export default function CMSPage() {
       siteName: "MU Home Service",
       siteUrl: "https://muhomeservice.com",
       accent: "#2563eb",
-    });
+    }),
+    [siteSettings, setSiteSettings] = useState(defaultSiteSettings),
+    [activeSettingsSection, setActiveSettingsSection] = useState("identity");
   const page = pages.find((p) => p.slug === selected) || pages[0];
   async function api(path, opts = {}) {
     const r = await fetch(API + path, {
@@ -257,6 +291,8 @@ export default function CMSPage() {
       setMedia(d.media || []);
       setServices(d.services || []);
       setPackages(d.packages || []);
+      setSiteSettings({ ...defaultSiteSettings, ...(d.settings || {}), identity: { ...defaultSiteSettings.identity, ...(d.settings?.identity || {}) }, business: { ...defaultSiteSettings.business, ...(d.settings?.business || {}) }, service: { ...defaultSiteSettings.service, ...(d.settings?.service || {}) }, appearance: { ...defaultSiteSettings.appearance, ...(d.settings?.appearance || {}) }, seo: { ...defaultSiteSettings.seo, ...(d.settings?.seo || {}) }, notifications: { ...defaultSiteSettings.notifications, ...(d.settings?.notifications || {}) }, system: { ...defaultSiteSettings.system, ...(d.settings?.system || {}) } });
+      setGlobalSettings({ siteName: d.settings?.identity?.siteName || defaultSiteSettings.identity.siteName, siteUrl: d.settings?.identity?.siteUrl || defaultSiteSettings.identity.siteUrl, accent: d.settings?.identity?.accent || defaultSiteSettings.identity.accent });
       setActiveDesignTheme(d.theme?.activeDesignTheme || d.theme?.activeTheme || "classic");
       setActiveColorTheme(d.theme?.activeColorTheme || d.theme?.activeTheme || "classic");
       setError("");
@@ -1780,73 +1816,29 @@ export default function CMSPage() {
                 <button className="pro-button pro-button-blue" disabled={busy} onClick={async()=>{setBusy(true);setError("");setNotice("");try{const d=await api("/admin/cms/theme",{method:"PUT",body:JSON.stringify({activeColorTheme,activeDesignTheme})});setActiveDesignTheme(d.theme?.activeDesignTheme||activeDesignTheme);setActiveColorTheme(d.theme?.activeColorTheme||activeColorTheme);setNotice("Color theme and public design published successfully.");}catch(e){setError(e.message);}finally{setBusy(false);}}}><Globe size={15}/>{busy?"Publishing…":"Publish Theme"}</button>
               </div>
             </section>
-            <section className="pro-card pro-settings-card">
+            <section className="pro-card pro-settings-card pro-general-settings">
               <div className="pro-card-heading">
-                <div>
-                  <span className="pro-card-kicker">SITE CONFIGURATION</span>
-                  <h2>General settings</h2>
-                  <p>
-                    CMS workspace-এর site identity এবং preview URL সেট করুন।
-                  </p>
-                </div>
+                <div><span className="pro-card-kicker">SITE CONFIGURATION</span><h2>General settings</h2><p>Manage the core website, business and system configuration from one place.</p></div>
                 <Settings size={20} />
               </div>
-              <div className="pro-settings-grid">
-                <label>
-                  Website name
-                  <input
-                    value={globalSettings.siteName}
-                    onChange={(e) =>
-                      setGlobalSettings((s) => ({
-                        ...s,
-                        siteName: e.target.value,
-                      }))
-                    }
-                  />
-                </label>
-                <label>
-                  Website URL
-                  <input
-                    value={globalSettings.siteUrl}
-                    onChange={(e) =>
-                      setGlobalSettings((s) => ({
-                        ...s,
-                        siteUrl: e.target.value,
-                      }))
-                    }
-                  />
-                </label>
-                <label>
-                  Brand accent colour
-                  <input
-                    type="color"
-                    value={globalSettings.accent}
-                    onChange={(e) =>
-                      setGlobalSettings((s) => ({
-                        ...s,
-                        accent: e.target.value,
-                      }))
-                    }
-                  />
-                </label>
+              <div className="pro-general-settings-layout">
+                <nav className="pro-settings-nav" aria-label="General settings sections">
+                  {settingsSections.map((section) => <button type="button" key={section.id} className={activeSettingsSection === section.id ? "active" : ""} onClick={() => setActiveSettingsSection(section.id)}><span>{section.title}</span><ChevronRight size={15}/></button>)}
+                </nav>
+                {settingsSections.filter((section) => section.id === activeSettingsSection).map((section) => (
+                  <div className="pro-settings-panel" key={section.id}>
+                    <div className="pro-settings-panel-heading"><div><h3>{section.title}</h3><p>{section.description}</p></div><span>{section.fields.length} settings</span></div>
+                    <div className="pro-settings-grid">
+                      {section.fields.map(([key, label, type]) => <label className={type === "textarea" ? "wide" : ""} key={key}>
+                        {label}
+                        {type === "textarea" ? <textarea rows={3} value={siteSettings[section.id]?.[key] ?? ""} onChange={(e) => setSiteSettings((old) => ({ ...old, [section.id]: { ...old[section.id], [key]: e.target.value } }))} /> : type === "checkbox" ? <input type="checkbox" checked={!!siteSettings[section.id]?.[key]} onChange={(e) => setSiteSettings((old) => ({ ...old, [section.id]: { ...old[section.id], [key]: e.target.checked } }))} /> : <input type={type} value={siteSettings[section.id]?.[key] ?? ""} onChange={(e) => setSiteSettings((old) => ({ ...old, [section.id]: { ...old[section.id], [key]: e.target.value } }))} />}
+                      </label>)}
+                    </div>
+                    {section.id === "notifications" && <p className="pro-settings-security-note"><ShieldCheck size={15}/> SMTP password, API secrets and provider credentials must be configured and stored securely on the server; they are intentionally not exposed in this form.</p>}
+                    <div className="pro-settings-actions"><button type="button" className="pro-button pro-button-light" onClick={() => setSiteSettings((old) => ({ ...old, [section.id]: { ...defaultSiteSettings[section.id] } }))}>Reset section</button><button type="button" className="pro-button pro-button-blue" disabled={busy} onClick={async () => { setBusy(true); setError(""); setNotice(""); try { const d = await api("/admin/cms/settings", { method: "PUT", body: JSON.stringify({ settings: siteSettings }) }); setSiteSettings((old) => ({ ...old, ...(d.settings || {}) })); if (section.id === "identity") setGlobalSettings({ siteName: siteSettings.identity.siteName || "MU Home Service", siteUrl: siteSettings.identity.siteUrl || "https://muhomeservice.com", accent: siteSettings.identity.accent || "#2563eb" }); setNotice(`${section.title} settings saved successfully.`); } catch (e) { setError(e.message); } finally { setBusy(false); } }}><Save size={15}/>{busy ? "Saving…" : "Save settings"}</button></div>
+                  </div>
+                ))}
               </div>
-              <div className="pro-alert info">
-                <Activity size={17} /> এই সেটিংস বর্তমানে CMS workspace-এর
-                preview-তে ব্যবহৃত হয়; public website-এর global settings API-তে
-                সংরক্ষিত নয়।
-              </div>
-              <button
-                className="pro-button pro-button-light"
-                onClick={() =>
-                  setGlobalSettings({
-                    siteName: "MU Home Service",
-                    siteUrl: "https://muhomeservice.com",
-                    accent: "#2563eb",
-                  })
-                }
-              >
-                Reset defaults
-              </button>
             </section>
             </>
           )}
