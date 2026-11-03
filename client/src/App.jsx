@@ -55,6 +55,7 @@ const API = (
 ).replace(/\/$/, "");
 import { fallbackServices, fallbackPackages, money } from "./models/catalog.js";
 import { useSiteContent } from "./hooks/useSiteContent.js";
+import { useGeneralSettings } from "./hooks/useGeneralSettings.js";
 
 import "./styles.css";
 import {
@@ -80,6 +81,22 @@ import {
 function RoutedApp() {
   const location = useLocation();
   const isAdminArea = location.pathname.startsWith("/admin") || location.pathname.startsWith("/partner");
+  const general = useGeneralSettings(API);
+  useEffect(() => {
+    if (isAdminArea) return;
+    const identity = general.identity || {};
+    const seo = general.seo || {};
+    document.title = seo.metaTitle || identity.siteName || "MU Home Service";
+    let description = document.querySelector('meta[name="description"]');
+    if (!description) { description = document.createElement("meta"); description.name = "description"; document.head.appendChild(description); }
+    if (seo.metaDescription) description.content = seo.metaDescription;
+    if (identity.faviconUrl) {
+      let icon = document.querySelector('link[rel="icon"]');
+      if (!icon) { icon = document.createElement("link"); icon.rel = "icon"; document.head.appendChild(icon); }
+      icon.href = identity.faviconUrl;
+    }
+    if (identity.accent) document.documentElement.style.setProperty("--site-accent", identity.accent);
+  }, [general, isAdminArea]);
   useEffect(() => {
     let active = true;
     if (isAdminArea) {

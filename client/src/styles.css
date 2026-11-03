@@ -1459,3 +1459,6 @@ html[data-public-color-theme] .brand-mark{background:var(--navy);color:var(--lim
 html[data-public-color-theme] .btn-primary{background:var(--navy)}
 html[data-public-color-theme] .cms-public-section.hero-section{background:linear-gradient(125deg,var(--navy),var(--navy2))}
 html[data-public-color-theme] .cms-public-button{background:var(--lime);color:var(--navy)}
+
+/* General settings public display */
+.brand-logo{max-height:48px;max-width:180px;object-fit:contain}.site-announcement{padding:9px 16px;text-align:center;background:var(--accent,#2563eb);color:#fff;font-weight:600}

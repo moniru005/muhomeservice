@@ -1,3 +1,4 @@
+import { useGeneralSettings } from "../hooks/useGeneralSettings.js";
 import React, { useEffect, useMemo, useState } from "react";
 import {
   BrowserRouter,
@@ -55,6 +56,9 @@ import { useSiteContent } from "../hooks/useSiteContent.js";
 
 export function Header() {
   const [open, setOpen] = useState(false);
+  const general = useGeneralSettings(API);
+  const identity = general.identity || {};
+  const appearance = general.appearance || {};
   const [account, setAccount] = useState(() => {
     try {
       return JSON.parse(
@@ -119,19 +123,13 @@ export function Header() {
     window.location.assign("/");
   }
   return (
+    <>
+    {appearance.announcementEnabled && appearance.announcementText ? <div className="site-announcement">{appearance.announcementText}</div> : null}
     <header className="site-header">
       <div className="container nav-wrap">
         <Link to="/" className="brand" onClick={() => setOpen(false)}>
-          <span className="brand-mark">
-            <Home size={22} />
-            <span className="brand-dot" />
-          </span>
-          <span>
-            <strong>
-              MU <b>HOME SERVICE</b>
-            </strong>
-            <small>HOME • OFFICE • TECH CARE</small>
-          </span>
+          {identity.logoUrl ? <img className="brand-logo" src={identity.logoUrl} alt={identity.siteName || "Website logo"} /> : <span className="brand-mark"><Home size={22} /><span className="brand-dot" /></span>}
+          <span><strong>{identity.siteName || "MU Home Service"}</strong><small>{identity.tagline || "HOME • OFFICE • TECH CARE"}</small></span>
         </Link>
         <button
           className="mobile-menu"
@@ -234,14 +232,18 @@ export function Header() {
         </nav>
       </div>
     </header>
+    </>
   );
 }
 
 export function WhatsAppFloat() {
+  const general = useGeneralSettings(API);
+  const business = general.business || {};
+  const number = String(business.whatsapp || business.phone || "8801683988686").replace(/\D/g, "");
   return (
     <a
       className="whatsapp-float"
-      href="https://wa.me/8801683988686?text=Assalamu%20Alaikum%2C%20MU%20Home%20Service%20er%20service%20nitte%20chai"
+      href={`https://wa.me/${number}?text=Assalamu%20Alaikum%2C%20${encodeURIComponent(general.identity?.siteName || "MU%20Home%20Service")}%20er%20service%20nitte%20chai`}
       target="_blank"
       rel="noreferrer"
       aria-label="WhatsApp"
@@ -252,6 +254,12 @@ export function WhatsAppFloat() {
 }
 
 export function Footer() {
+  const general = useGeneralSettings(API);
+  const identity = general.identity || {};
+  const business = general.business || {};
+  const phone = business.phone || "01683-988686";
+  const tel = phone.replace(/\D/g, "");
+  const whatsapp = String(business.whatsapp || business.phone || "8801683988686").replace(/\D/g, "");
   return (
     <footer className="footer">
       <div className="container footer-grid">
@@ -261,10 +269,8 @@ export function Footer() {
               <Home size={22} />
             </span>
             <span>
-              <strong>
-                MU <b>HOME SERVICE</b>
-              </strong>
-              <small>HOME • OFFICE • TECH CARE</small>
+              <strong>{identity.siteName || "MU Home Service"}</strong>
+              <small>{identity.tagline || "HOME • OFFICE • TECH CARE"}</small>
             </span>
           </Link>
           <p>
@@ -272,7 +278,7 @@ export function Footer() {
             থেকে।
           </p>
           <div className="footer-location">
-            <MapPin size={16} /> মাইজদী, নোয়াখালী, বাংলাদেশ
+            <MapPin size={16} /> {business.address || "মাইজদী, নোয়াখালী, বাংলাদেশ"}
           </div>
         </div>
         <div>
@@ -291,11 +297,11 @@ export function Footer() {
         </div>
         <div>
           <h4>যোগাযোগ</h4>
-          <a href="tel:+8801683988686">
-            <Phone size={15} /> 01683-988686
+          <a href={`tel:${tel}`}>
+            <Phone size={15} /> {phone}
           </a>
           <a
-            href="https://wa.me/8801683988686"
+            href={`https://wa.me/${whatsapp}`}
             target="_blank"
             rel="noreferrer"
           >
@@ -309,7 +315,7 @@ export function Footer() {
       </div>
       <div className="container footer-bottom">
         <span>
-          © {new Date().getFullYear()} MU Home Service. All rights reserved.
+          {identity.copyright || `© ${new Date().getFullYear()} ${identity.siteName || "MU Home Service"}. All rights reserved.`}
         </span>
         <span>Powered by MU Computer Tech</span>
       </div>
