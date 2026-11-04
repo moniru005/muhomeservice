@@ -1462,3 +1462,16 @@ html[data-public-color-theme] .cms-public-button{background:var(--lime);color:va
 
 /* General settings public display */
 .brand-logo{max-height:48px;max-width:180px;object-fit:contain}.site-announcement{padding:9px 16px;text-align:center;background:var(--accent,#2563eb);color:#fff;font-weight:600}
+
+/* CMS General Settings: operational public presentation */
+.site-header-nonsticky{position:relative;top:auto}.site-header-compact{height:64px}.footer-compact{padding-top:28px}.footer-hours{display:flex;align-items:center;gap:7px;color:#9eb2c5;font-size:11px;margin:10px 0}.footer-socials{display:flex;gap:12px;flex-wrap:wrap;margin-top:12px}.footer-socials a{font-size:11px;color:#a8bacb}.footer-socials a:hover{color:var(--lime)}.public-back-to-top{position:fixed;right:22px;bottom:86px;z-index:45;width:42px;height:42px;border:0;border-radius:50%;background:var(--site-accent,#2563eb);color:white;font-size:23px;box-shadow:0 6px 18px #0002}.maintenance-screen{min-height:75vh;display:grid;place-items:center;padding:30px;background:#f6f8fb;text-align:center}.maintenance-screen>div{max-width:650px;padding:45px 30px;background:white;border:1px solid #e5eaf0;border-radius:18px;box-shadow:0 15px 50px #12233b0b}.maintenance-screen h1{margin:0 0 15px;color:var(--navy);font-size:clamp(25px,4vw,40px)}.maintenance-screen p{margin:0;color:#64748b;line-height:1.8}.pro-settings-panel .pro-settings-grid select{width:100%;min-width:0;border:1px solid #dfe6ef;border-radius:8px;padding:10px 11px;background:#fff;color:#26364d;font:inherit;font-size:11px}
+
+.public-preloader{position:fixed;inset:0;z-index:9999;display:grid;place-items:center;background:#fff}.public-preloader span{width:38px;height:38px;border:3px solid #dce5f0;border-top-color:var(--site-accent,#2563eb);border-radius:50%;animation:public-spin .65s linear infinite}@keyframes public-spin{to{transform:rotate(360deg)}}
+
+/* Booking amount quote: responsive, readable across narrow screens */
+.booking-amount-preview{width:100%;min-width:0;box-sizing:border-box;color:#182b42;overflow-wrap:anywhere}
+.booking-amount-preview h3{font-size:clamp(16px,2.5vw,20px);line-height:1.35}
+.booking-amount-preview>div{min-width:0}
+.booking-amount-preview span{font-size:clamp(12px,2vw,14px);line-height:1.5}
+.booking-amount-preview b,.booking-amount-preview strong{font-variant-numeric:tabular-nums;white-space:normal;text-align:right;overflow-wrap:anywhere}
+@media(max-width:420px){.booking-amount-preview{padding:12px!important;margin:10px 0!important}.booking-amount-preview span{font-size:12px}.booking-amount-preview b,.booking-amount-preview strong{font-size:12px}.booking-amount-preview h3{font-size:16px}}

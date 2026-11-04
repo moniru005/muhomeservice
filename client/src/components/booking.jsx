@@ -91,6 +91,38 @@ export function BookingForm({
     success: null,
   });
   const [bookingPhotos, setBookingPhotos] = useState([]);
+  const [bookingConfig, setBookingConfig] = useState({ service: {}, business: {} });
+  const configuredAreaOptions = useMemo(() => String(bookingConfig.service.serviceAreas || "").split(/[\n,;]+/).map(x => x.trim()).filter(Boolean), [bookingConfig.service.serviceAreas]);
+  const areaOptions = configuredAreaOptions.length ? configuredAreaOptions : ["Maijdee", "Sonapur", "Chowmuhani", "Noakhali Sadar", "Other area"];
+  const selectedCatalogItem = useMemo(() => [...(services || []), ...(packages || [])].find(item => item.id === form.serviceId) || null, [services, packages, form.serviceId]);
+  const quotePreview = useMemo(() => {
+    const toAmount = value => { const n = Number(value); return Number.isFinite(n) && n > 0 ? n : 0; };
+    const price = toAmount(selectedCatalogItem?.price);
+    const minimum = toAmount(bookingConfig.service.minimumBooking);
+    const base = Math.max(price, minimum);
+    const emergency = form.emergency && bookingConfig.business.emergencyService ? toAmount(bookingConfig.service.emergencyFee) : 0;
+    const taxRate = Math.min(100, toAmount(bookingConfig.service.taxRate));
+    const subtotal = base + emergency;
+    const tax = Math.round((subtotal * taxRate / 100 + Number.EPSILON) * 100) / 100;
+    const total = Math.round((subtotal + tax + Number.EPSILON) * 100) / 100;
+    const advanceInput = toAmount(bookingConfig.service.bookingAdvance);
+    const advance = String(bookingConfig.service.advanceType || "fixed").toLowerCase() === "percentage"
+      ? Math.min(total, total * Math.min(100, advanceInput) / 100) : Math.min(total, advanceInput);
+    return { price, base, emergency, taxRate, tax, total, advance: Math.round((advance + Number.EPSILON) * 100) / 100, balance: Math.round((total - advance + Number.EPSILON) * 100) / 100, minimum, meetsMinimum: price >= minimum };
+  }, [selectedCatalogItem, bookingConfig, form.emergency]);
+  const formatQuoteMoney = value => `৳${Number(value || 0).toLocaleString("en-BD", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  useEffect(() => {
+    if (areaOptions.length && !areaOptions.some(area => area.toLocaleLowerCase() === String(form.area || "").toLocaleLowerCase())) {
+      setForm(previous => ({ ...previous, area: areaOptions[0] }));
+    }
+  }, [areaOptions, form.area]);
+  useEffect(() => {
+    let active = true;
+    fetch(`${API}/site-settings`).then(r => r.ok ? r.json() : null).then(d => {
+      if (active && d?.settings) setBookingConfig({ service: d.settings.service || {}, business: d.settings.business || {} });
+    }).catch(() => {});
+    return () => { active = false; };
+  }, []);
   useEffect(() => {
     if (initialService) setForm((p) => ({ ...p, serviceId: initialService }));
   }, [initialService]);
@@ -123,6 +155,10 @@ export function BookingForm({
         error: "শুধুমাত্র Customer/Client অ্যাকাউন্ট থেকে বুকিং করা যাবে।",
         success: null,
       });
+      return;
+    }
+    if (selectedCatalogItem && !quotePreview.meetsMinimum) {
+      setState({ loading: false, error: `এই সার্ভিসের মূল্য নির্ধারিত Minimum Booking (${formatQuoteMoney(quotePreview.minimum)})-এর কম। এই সার্ভিসের জন্য এখন বুকিং করা যাবে না।`, success: null });
       return;
     }
     setState({ loading: true, error: "", success: null });
@@ -216,6 +252,13 @@ export function BookingForm({
             {state.success.message}
             <br />
             <strong>Ticket ID: {state.success.ticketId}</strong>
+            {state.success.amount && <div style={{marginTop:8}}>
+              <div>Base: {formatQuoteMoney(state.success.amount.base)}</div>
+              {Number(state.success.amount.emergencyFee || 0) > 0 && <div>জরুরি চার্জ: {formatQuoteMoney(state.success.amount.emergencyFee)}</div>}
+              {Number(state.success.amount.tax || 0) > 0 && <div>Tax/VAT: {formatQuoteMoney(state.success.amount.tax)}</div>}
+              <b>মোট: {formatQuoteMoney(state.success.amount.total)}</b>
+              {Number(state.success.amount.advanceDue || 0) > 0 && <div>Advance due: {formatQuoteMoney(state.success.amount.advanceDue)}</div>}
+            </div>}
           </div>
         </div>
       )}
@@ -277,11 +320,7 @@ export function BookingForm({
         <label>
           এলাকা *
           <select name="area" value={form.area} onChange={update}>
-            <option>Maijdee</option>
-            <option>Sonapur</option>
-            <option>Chowmuhani</option>
-            <option>Noakhali Sadar</option>
-            <option>Other area</option>
+            {areaOptions.map(area => <option key={area} value={area}>{area}</option>)}
           </select>
         </label>
         <label className="full-field">
@@ -319,6 +358,10 @@ export function BookingForm({
             <option>জরুরি</option>
           </select>
         </label>
+        {bookingConfig.business.emergencyService && <label className="full-field booking-emergency-option">
+          <input type="checkbox" checked={Boolean(form.emergency)} onChange={e => setForm(p => ({ ...p, emergency: e.target.checked }))} />
+          জরুরি সার্ভিস প্রয়োজন (প্রযোজ্য হলে অতিরিক্ত চার্জ যুক্ত হবে)
+        </label>}
         <label className="full-field">
           সমস্যার ছবি (ঐচ্ছিক, সর্বোচ্চ ৫টি)
           <input type="file" accept="image/jpeg,image/png,image/webp" multiple onChange={(e) => setBookingPhotos(Array.from(e.target.files || []).slice(0, 5))} />
@@ -337,11 +380,31 @@ export function BookingForm({
           />
         </label>
       </div>
+      {selectedCatalogItem && !quotePreview.meetsMinimum && <div className="alert error" role="alert">এই সার্ভিসের মূল্য {formatQuoteMoney(quotePreview.price)}; Minimum Booking হলো {formatQuoteMoney(quotePreview.minimum)}। Minimum Booking পূরণ না হওয়ায় বুকিং পাঠানো যাবে না।</div>}
+      {selectedCatalogItem && <section className="booking-amount-preview" aria-live="polite" style={{border:"1px solid #dbe4ee",borderRadius:12,padding:16,margin:"14px 0",background:"#f8fafc"}}>
+        <h3 style={{margin:"0 0 10px"}}>বুকিংয়ের আনুমানিক খরচ</h3>
+        <div style={{display:"grid",gap:6}}>
+          <div style={{display:"flex",justifyContent:"space-between",gap:12}}><span>সার্ভিস মূল্য</span><b>{formatQuoteMoney(quotePreview.price)}</b></div>
+          {quotePreview.base > quotePreview.price && <div style={{display:"flex",justifyContent:"space-between",gap:12}}><span>Minimum Booking অনুযায়ী অতিরিক্ত</span><b>{formatQuoteMoney(quotePreview.base - quotePreview.price)}</b></div>}
+          <div style={{display:"flex",justifyContent:"space-between",gap:12}}><span>Base amount</span><b>{formatQuoteMoney(quotePreview.base)}</b></div>
+          {quotePreview.emergency > 0 && <div style={{display:"flex",justifyContent:"space-between",gap:12}}><span>জরুরি সার্ভিস চার্জ</span><b>{formatQuoteMoney(quotePreview.emergency)}</b></div>}
+          {quotePreview.taxRate > 0 && <div style={{display:"flex",justifyContent:"space-between",gap:12}}><span>Tax / VAT ({quotePreview.taxRate}%)</span><b>{formatQuoteMoney(quotePreview.tax)}</b></div>}
+          <div style={{display:"flex",justifyContent:"space-between",gap:12,borderTop:"1px solid #cbd5e1",paddingTop:8}}><strong>আনুমানিক মোট খরচ</strong><strong>{formatQuoteMoney(quotePreview.total)}</strong></div>
+          {quotePreview.advance > 0 && <>
+            <div style={{display:"flex",justifyContent:"space-between",gap:12}}><span>বুকিং advance (আগে পরিশোধযোগ্য)</span><b>− {formatQuoteMoney(quotePreview.advance)}</b></div>
+            <div style={{display:"flex",justifyContent:"space-between",gap:12,borderTop:"1px solid #cbd5e1",paddingTop:8,fontSize:17,color:"#14532d"}}><strong>Advance বাদে বাকি</strong><strong>{formatQuoteMoney(quotePreview.balance)}</strong></div>
+          </>}
+        </div>
+        <small style={{display:"block",marginTop:8,color:"#64748b"}}>General Settings ও নির্বাচিত সার্ভিসের ভিত্তিতে আনুমানিক হিসাব। চূড়ান্ত মূল্য Admin/Technician quotation-এ নিশ্চিত করবেন।</small>
+      </section>}
+      {(bookingConfig.service.cancellationPolicy || bookingConfig.service.reschedulePolicy) && <div className="booking-policy-note">
+        {bookingConfig.service.cancellationPolicy && <p><b>বাতিলের নীতি:</b> {bookingConfig.service.cancellationPolicy}</p>}
+        {bookingConfig.service.reschedulePolicy && <p><b>সময় পরিবর্তনের নীতি:</b> {bookingConfig.service.reschedulePolicy}</p>}
+      </div>}
       <p className="form-disclaimer">
-        <ShieldCheck size={15} /> বুকিং পাঠানোর পর আমাদের টিম ফোন করে সময় ও
-        আনুমানিক খরচ নিশ্চিত করবে।
+        <ShieldCheck size={15} /> বুকিং পাঠানোর পর Minimum Booking, প্রযোজ্য Emergency Fee ও VAT অনুযায়ী আনুমানিক খরচ নির্ধারিত হবে। চূড়ান্ত quotation আমাদের টিম নিশ্চিত করবে।
       </p>
-      <button className="btn btn-primary btn-full" disabled={state.loading}>
+      <button className="btn btn-primary btn-full" disabled={state.loading || Boolean(selectedCatalogItem && !quotePreview.meetsMinimum)}>
         {state.loading ? "পাঠানো হচ্ছে..." : "সার্ভিস রিকোয়েস্ট পাঠান"}{" "}
         <ArrowRight size={17} />
       </button>

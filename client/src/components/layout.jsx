@@ -124,8 +124,8 @@ export function Header() {
   }
   return (
     <>
-    {appearance.announcementEnabled && appearance.announcementText ? <div className="site-announcement">{appearance.announcementText}</div> : null}
-    <header className="site-header">
+    {appearance.announcementEnabled && appearance.announcementText ? <div className="site-announcement" role="status" style={{ backgroundColor: appearance.announcementBackground || "#2563eb", color: appearance.announcementColor || "#ffffff" }}>{appearance.announcementText}</div> : null}
+    <header className={`site-header ${appearance.stickyHeader === false ? "site-header-nonsticky" : ""} ${appearance.headerStyle === "compact" ? "site-header-compact" : ""}`} style={{ "--site-accent": identity.accent || "#2563eb" }}>
       <div className="container nav-wrap">
         <Link to="/" className="brand" onClick={() => setOpen(false)}>
           {identity.logoUrl ? <img className="brand-logo" src={identity.logoUrl} alt={identity.siteName || "Website logo"} /> : <span className="brand-mark"><Home size={22} /><span className="brand-dot" /></span>}
@@ -261,13 +261,11 @@ export function Footer() {
   const tel = phone.replace(/\D/g, "");
   const whatsapp = String(business.whatsapp || business.phone || "8801683988686").replace(/\D/g, "");
   return (
-    <footer className="footer">
+    <footer className={`footer ${general.appearance?.footerLayout === "compact" ? "footer-compact" : ""}`}>
       <div className="container footer-grid">
         <div>
           <Link to="/" className="brand footer-brand">
-            <span className="brand-mark">
-              <Home size={22} />
-            </span>
+            {identity.logoUrl ? <img className="brand-logo" src={identity.logoUrl} alt={identity.siteName || "Website logo"} /> : <span className="brand-mark"><Home size={22} /><span className="brand-dot" /></span>}
             <span>
               <strong>{identity.siteName || "MU Home Service"}</strong>
               <small>{identity.tagline || "HOME • OFFICE • TECH CARE"}</small>
@@ -278,8 +276,9 @@ export function Footer() {
             থেকে।
           </p>
           <div className="footer-location">
-            <MapPin size={16} /> {business.address || "মাইজদী, নোয়াখালী, বাংলাদেশ"}
+            <MapPin size={16} /> {business.mapsUrl ? <a href={business.mapsUrl} target="_blank" rel="noreferrer">{business.address || "মাইজদী, নোয়াখালী, বাংলাদেশ"}</a> : (business.address || "মাইজদী, নোয়াখালী, বাংলাদেশ")}
           </div>
+          {business.businessHours ? <p className="footer-hours"><Clock3 size={15}/> {business.businessHours}{business.businessHoursNote ? ` · ${business.businessHoursNote}` : ""}</p> : null}
         </div>
         <div>
           <h4>সার্ভিস</h4>
@@ -300,6 +299,8 @@ export function Footer() {
           <a href={`tel:${tel}`}>
             <Phone size={15} /> {phone}
           </a>
+          {business.secondaryPhone ? <a href={`tel:${String(business.secondaryPhone).replace(/\D/g, "")}`}><Phone size={15}/> {business.secondaryPhone}</a> : null}
+          {business.email ? <a href={`mailto:${business.email}`}>✉ {business.email}</a> : null}
           <a
             href={`https://wa.me/${whatsapp}`}
             target="_blank"
@@ -311,6 +312,7 @@ export function Footer() {
             সার্ভিসের চূড়ান্ত মূল্য কাজের পরিধি ও যন্ত্রাংশ অনুযায়ী নির্ধারিত
             হবে।
           </p>
+          <div className="footer-socials">{[["facebook", "Facebook"], ["instagram", "Instagram"], ["youtube", "YouTube"]].filter(([key]) => general.seo?.[key]).map(([key, label]) => <a key={key} href={general.seo[key]} target="_blank" rel="noreferrer">{label}</a>)}</div>
         </div>
       </div>
       <div className="container footer-bottom">

@@ -82,14 +82,23 @@ function RoutedApp() {
   const location = useLocation();
   const isAdminArea = location.pathname.startsWith("/admin") || location.pathname.startsWith("/partner");
   const general = useGeneralSettings(API);
+  const [showBackToTop, setShowBackToTop] = useState(false);
+  const [showPreloader, setShowPreloader] = useState(false);
+  useEffect(() => { if (!general.appearance?.preloader || isAdminArea) { setShowPreloader(false); return; } setShowPreloader(true); const timer = window.setTimeout(() => setShowPreloader(false), 700); return () => window.clearTimeout(timer); }, [general.appearance?.preloader, isAdminArea, location.pathname]);
+  useEffect(() => { const onScroll = () => setShowBackToTop(window.scrollY > 350); window.addEventListener("scroll", onScroll, { passive: true }); onScroll(); return () => window.removeEventListener("scroll", onScroll); }, []);
   useEffect(() => {
     if (isAdminArea) return;
     const identity = general.identity || {};
     const seo = general.seo || {};
+    const appearance = general.appearance || {};
     document.title = seo.metaTitle || identity.siteName || "MU Home Service";
     let description = document.querySelector('meta[name="description"]');
     if (!description) { description = document.createElement("meta"); description.name = "description"; document.head.appendChild(description); }
     if (seo.metaDescription) description.content = seo.metaDescription;
+    const setMeta = (property, content) => { if (!content) return; let tag = document.querySelector(`meta[property="${property}"]`); if (!tag) { tag = document.createElement("meta"); tag.setAttribute("property", property); document.head.appendChild(tag); } tag.content = content; };
+    setMeta("og:title", seo.metaTitle || identity.siteName); setMeta("og:description", seo.metaDescription); setMeta("og:image", seo.ogImage); setMeta("og:url", identity.siteUrl);
+    const setNameMeta = (name, content) => { if (!content) return; let tag = document.querySelector(`meta[name="${name}"]`); if (!tag) { tag = document.createElement("meta"); tag.name = name; document.head.appendChild(tag); } tag.content = content; };
+    setNameMeta("twitter:card", "summary_large_image"); setNameMeta("twitter:title", seo.metaTitle || identity.siteName); setNameMeta("twitter:description", seo.metaDescription); setNameMeta("twitter:image", seo.ogImage);
     if (identity.faviconUrl) {
       let icon = document.querySelector('link[rel="icon"]');
       if (!icon) { icon = document.createElement("link"); icon.rel = "icon"; document.head.appendChild(icon); }
@@ -125,6 +134,8 @@ function RoutedApp() {
   );
   return (
     <>
+      {showPreloader && !isAdminArea ? <div className="public-preloader" role="status" aria-label="Loading"><span /></div> : null}
+      {!isAdminArea && general.appearance?.maintenanceMode ? <main className="maintenance-screen"><div><h1>{general.identity?.siteName || "Website"}</h1><p>{general.appearance?.maintenanceMessage || "We are performing scheduled maintenance. Please check back soon."}</p></div></main> : <>
       <>{!isAdminArea && <Header />}</>
       <Routes>
         <Route
@@ -181,8 +192,10 @@ function RoutedApp() {
         <>
           <Footer />
           <WhatsAppFloat />
+          {general.appearance?.backToTop !== false && showBackToTop ? <button className="public-back-to-top" type="button" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })} aria-label="Back to top">↑</button> : null}
         </>
       )}
+      </>}
     </>
   );
 }

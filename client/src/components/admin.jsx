@@ -472,6 +472,7 @@ export function AdminPage() {
                     <th>Ticket / Date</th>
                     <th>Customer</th>
                     <th>Service</th>
+                    <th>Booking Amount</th>
                     <th>Area & Problem</th>
                     <th>Status</th>
                     <th>Assign technician(s) / Action</th>
@@ -494,6 +495,13 @@ export function AdminPage() {
                         {b.email && <small>{b.email}</small>}
                       </td>
                       <td>{b.serviceName}</td>
+                      <td>
+                        <b>৳{Number(b.totalAmount ?? b.quotedAmount ?? b.price ?? 0).toLocaleString("en-BD", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</b>
+                        <small style={{display:"block"}}>Base: ৳{Number(b.baseAmount ?? b.minimumBooking ?? b.price ?? 0).toLocaleString("en-BD", { maximumFractionDigits: 2 })}</small>
+                        {Number(b.emergencyFee || 0) > 0 && <small style={{display:"block"}}>জরুরি: ৳{Number(b.emergencyFee).toLocaleString("en-BD", { maximumFractionDigits: 2 })}</small>}
+                        {Number(b.taxAmount || 0) > 0 && <small style={{display:"block"}}>Tax/VAT: ৳{Number(b.taxAmount).toLocaleString("en-BD", { maximumFractionDigits: 2 })}</small>}
+                        {Number(b.advanceDue || 0) > 0 && <small style={{display:"block"}}>Advance: ৳{Number(b.advanceDue).toLocaleString("en-BD", { maximumFractionDigits: 2 })}</small>}
+                      </td>
                       <td>
                         <b>{b.area}</b>
                         <small>{b.address}</small>

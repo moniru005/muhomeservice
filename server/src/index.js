@@ -123,6 +123,7 @@ app.get("/api/site-settings", async (_req, res, next) => {
     const publicSettings = {
       identity: settings.identity || {},
       business: settings.business || {},
+      service: settings.service || {},
       appearance: settings.appearance || {},
       seo: settings.seo || {},
     };

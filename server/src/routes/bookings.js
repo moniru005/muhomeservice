@@ -6,6 +6,7 @@ import { ObjectId } from 'mongodb';
 import { requireAdmin, requireAuth, requireRole } from '../middleware/auth.js';
 import { requirePermission, getRolePermissions } from '../middleware/permissions.js';
 import { notifySmsSafely, notifyWhatsAppSafely } from '../services/integrations.js';
+import { calculateBookingQuote, isServiceAreaAllowed, parseServiceAreas } from '../services/bookingRules.js';
 
 const router = Router();
 const statuses = ['New', 'Contacted', 'Assigned', 'On the way', 'Inspection', 'Quotation sent', 'Quotation rejected', 'Approved', 'In progress', 'Completed', 'Cancelled'];
@@ -23,21 +24,49 @@ router.post('/bookings', requireAuth, requireRole('customer'), async (req, res, 
     if (name.length < 2 || !/^\+?[0-9\s()-]{8,18}$/.test(phone) || !serviceId || address.length < 5 || problem.length < 5) {
       return res.status(400).json({ message: 'নাম, সঠিক ফোন নম্বর, সার্ভিস, ঠিকানা ও সমস্যার বিবরণ দিন।' });
     }
-    const savedServices=await getDB().collection('siteContent').findOne({_id:'services'}); const savedPackages=await getDB().collection('siteContent').findOne({_id:'packages'}); const currentServices=savedServices?.items||services; const currentPackages=savedPackages?.items||packages;
-    if (!currentServices.some(s => s.id === serviceId) && !currentPackages.some(p => p.id === serviceId)) return res.status(400).json({ message: 'Invalid service selection' });
+    const db = getDB();
+    const [savedServices, savedPackages, savedSettings] = await Promise.all([
+      db.collection('siteContent').findOne({_id:'services'}),
+      db.collection('siteContent').findOne({_id:'packages'}),
+      db.collection('siteContent').findOne({_id:'generalSettings'})
+    ]);
+    const currentServices=savedServices?.items||services; const currentPackages=savedPackages?.items||packages;
+    const selectedService=currentServices.find(s => s.id === serviceId);
+    const selectedPackage=currentPackages.find(p => p.id === serviceId);
+    if (!selectedService && !selectedPackage) return res.status(400).json({ message: 'Invalid service selection' });
+    const rules=savedSettings?.settings?.service||{};
+    const configuredAreas = parseServiceAreas(rules.serviceAreas);
+    const requestedArea = String(req.body.area || '').trim();
+    if (!isServiceAreaAllowed(requestedArea, configuredAreas)) {
+      return res.status(400).json({ message: `এই মুহূর্তে ${requestedArea || 'নির্বাচিত'} এলাকায় বুকিং গ্রহণ করা হচ্ছে না। অনুমোদিত এলাকা: ${configuredAreas.join(', ')}` });
+    }
+    const rawPrice = Number(selectedService?.price ?? selectedPackage?.price ?? 0);
+    if (!Number.isFinite(rawPrice) || rawPrice < 0) return res.status(400).json({ message: 'সার্ভিসের মূল্য সঠিক নয়। Admin-এর সঙ্গে যোগাযোগ করুন।' });
+    const emergencyRequested = Boolean(req.body.emergency || req.body.preferredTime === 'জরুরি');
+    const emergencyAllowed = Boolean(savedSettings?.settings?.business?.emergencyService);
+    const configuredMinimum = Number(rules.minimumBooking || 0);
+    if (Number.isFinite(configuredMinimum) && configuredMinimum > 0 && rawPrice < configuredMinimum) {
+      return res.status(422).json({ message: `এই সার্ভিসের মূল্য নির্ধারিত Minimum Booking (৳${configuredMinimum.toFixed(2)})-এর কম। বুকিং পাঠানো যাবে না।` });
+    }
+    const quote = calculateBookingQuote({ rawPrice, rules, emergencyRequested, emergencyAllowed });
+    const { minimumBooking, baseAmount, emergencyFee, taxRate, taxAmount, totalAmount, advanceType, advanceDue } = quote;
+    const autoConfirm = String(rules.bookingConfirmation || 'manual').toLowerCase() === 'auto';
+    const bookingStatus='New';
     const userId = account._id.toString();
     const booking = {
       ticketId: `MU-${new Date().getFullYear()}-${randomUUID().slice(0, 6).toUpperCase()}`,
       name, phone, email: String(account.email || '').trim().slice(0, 120),
-      serviceId, serviceName: currentServices.find(s => s.id === serviceId)?.name || currentPackages.find(p => p.id === serviceId)?.name, userId,
+      serviceId, serviceName: selectedService?.name || selectedPackage?.name, userId,
       fulfilmentType: currentServices.find(s => s.id === serviceId)?.fulfilment || 'inhouse', partnerId: null, partnerStatus: 'not_dispatched',
-      address, area: String(req.body.area || 'Maijdee').trim(), preferredDate: String(req.body.preferredDate || ''),
-      preferredTime: String(req.body.preferredTime || 'যেকোনো সময়'), problem, status: 'New',
+      address, area: requestedArea, preferredDate: String(req.body.preferredDate || ''),
+      preferredTime: String(req.body.preferredTime || 'যেকোনো সময়'), problem, status: bookingStatus,
+      price: rawPrice, minimumBooking, baseAmount, emergencyFee, taxRate, taxAmount, totalAmount, advanceType, advanceDue, paymentStatus: advanceDue>0?'pending':'not_required',
+      bookingConfirmed: autoConfirm, cancellationPolicy: String(rules.cancellationPolicy||''), reschedulePolicy: String(rules.reschedulePolicy||''),
       adminNote: '', createdAt: new Date(), updatedAt: new Date()
     };
     const insertedBooking = await getDB().collection('bookings').insertOne(booking);
-    await Promise.all([notifySmsSafely({ to: phone, message: `MU Home Service: আপনার বুকিং ${booking.ticketId} গ্রহণ করা হয়েছে। Status: New.`, context: 'booking-created' }), notifyWhatsAppSafely({ to: phone, message: `MU Home Service: আপনার বুকিং ${booking.ticketId} গ্রহণ করা হয়েছে। Status: New.`, context: 'booking-created' })]);
-    res.status(201).json({ message: 'আপনার বুকিং গ্রহণ করা হয়েছে। আমরা ফোন করে নিশ্চিত করব।', ticketId: booking.ticketId, bookingId: insertedBooking.insertedId.toString() });
+    await Promise.all([notifySmsSafely({ to: phone, message: `MU Home Service: আপনার বুকিং ${booking.ticketId} গ্রহণ করা হয়েছে। Status: ${bookingStatus}${autoConfirm?' (Auto-confirmed)':''}.`, context: 'booking-created' }), notifyWhatsAppSafely({ to: phone, message: `MU Home Service: আপনার বুকিং ${booking.ticketId} গ্রহণ করা হয়েছে। Status: ${bookingStatus}${autoConfirm?' (Auto-confirmed)':''}.`, context: 'booking-created' })]);
+    res.status(201).json({ message: autoConfirm?'আপনার বুকিং স্বয়ংক্রিয়ভাবে নিশ্চিত হয়েছে। প্রয়োজনে আমাদের টিম যোগাযোগ করবে।':'আপনার বুকিং গ্রহণ করা হয়েছে। আমাদের টিম ফোন করে নিশ্চিত করবে।', ticketId: booking.ticketId, bookingId: insertedBooking.insertedId.toString(), amount: {base:baseAmount, emergencyFee, tax:taxAmount, total:totalAmount, advanceDue}, bookingConfirmed:autoConfirm, cancellationPolicy:booking.cancellationPolicy, reschedulePolicy:booking.reschedulePolicy });
   } catch (err) { next(err); }
 });
 

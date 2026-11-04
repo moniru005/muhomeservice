@@ -196,13 +196,13 @@ const settingsSections = [
     ["siteName", "Website name", "text"], ["siteUrl", "Website URL", "url"], ["tagline", "Website tagline", "text"], ["logoUrl", "Logo URL", "url"], ["darkLogoUrl", "Dark logo URL", "url"], ["faviconUrl", "Favicon URL", "url"], ["language", "Default language", "text"], ["timezone", "Timezone", "text"], ["copyright", "Copyright text", "text"], ["accent", "Brand accent colour", "color"]
   ]},
   { id: "business", title: "Business Information", description: "Public contact details and business hours", fields: [
-    ["businessName", "Business name", "text"], ["phone", "Primary phone", "tel"], ["secondaryPhone", "Secondary phone", "tel"], ["email", "Support email", "email"], ["address", "Business address", "text"], ["mapsUrl", "Google Maps URL", "url"], ["whatsapp", "WhatsApp number", "tel"], ["businessHours", "Business hours", "text"], ["emergencyService", "Emergency service available", "checkbox"]
+    ["businessName", "Business name", "text"], ["phone", "Primary phone", "tel"], ["secondaryPhone", "Secondary phone", "tel"], ["email", "Support email", "email"], ["address", "Business address", "text"], ["mapsUrl", "Google Maps URL", "url"], ["whatsapp", "WhatsApp number", "tel"], ["businessHours", "Business hours", "text"], ["businessHoursNote", "Business hours note", "text"], ["emergencyService", "Emergency service available", "checkbox"]
   ]},
   { id: "service", title: "Service Configuration", description: "Service coverage, booking rules and charges", fields: [
     ["serviceAreas", "Service coverage areas", "textarea"], ["minimumBooking", "Minimum booking amount", "number"], ["bookingAdvance", "Booking advance amount / %", "text"], ["advanceType", "Advance type (fixed / percentage)", "text"], ["cancellationPolicy", "Cancellation policy", "textarea"], ["reschedulePolicy", "Reschedule policy", "textarea"], ["taxRate", "Tax / VAT (%)", "number"], ["emergencyFee", "Emergency service fee", "number"], ["serviceGuarantee", "Service guarantee", "text"], ["bookingConfirmation", "Booking confirmation (manual / auto)", "text"]
   ]},
   { id: "appearance", title: "Appearance", description: "Global frontend display preferences", fields: [
-    ["defaultTheme", "Default appearance (light / dark)", "text"], ["headerStyle", "Header style", "text"], ["footerLayout", "Footer layout", "text"], ["stickyHeader", "Sticky header", "checkbox"], ["backToTop", "Back to top button", "checkbox"], ["preloader", "Preloader", "checkbox"], ["announcementEnabled", "Announcement bar", "checkbox"], ["announcementText", "Announcement text", "text"], ["maintenanceMode", "Maintenance mode", "checkbox"]
+    ["defaultTheme", "Default appearance (light / dark)", "select:light|dark"], ["headerStyle", "Header style", "select:standard|compact"], ["footerLayout", "Footer layout", "select:standard|compact"], ["stickyHeader", "Sticky header", "checkbox"], ["backToTop", "Back to top button", "checkbox"], ["preloader", "Preloader", "checkbox"], ["announcementEnabled", "Announcement bar", "checkbox"], ["announcementText", "Announcement text", "text"], ["announcementBackground", "Announcement background colour", "color"], ["announcementColor", "Announcement text colour", "color"], ["maintenanceMode", "Maintenance mode", "checkbox"], ["maintenanceMessage", "Maintenance message", "textarea"]
   ]},
   { id: "seo", title: "SEO & Social Media", description: "Default search engine and social sharing metadata", fields: [
     ["metaTitle", "Default meta title", "text"], ["metaDescription", "Default meta description", "textarea"], ["ogImage", "Default social share image URL", "url"], ["analyticsId", "Google Analytics ID", "text"], ["searchConsole", "Search Console verification", "text"], ["facebook", "Facebook URL", "url"], ["instagram", "Instagram URL", "url"], ["youtube", "YouTube URL", "url"]
@@ -216,9 +216,9 @@ const settingsSections = [
 ];
 const defaultSiteSettings = {
   identity: { siteName: "MU Home Service", siteUrl: "https://muhomeservice.com", tagline: "Professional Home Services", language: "বাংলা", timezone: "Asia/Dhaka", copyright: "© MU Home Service", accent: "#2563eb" },
-  business: { businessName: "MU Home Service", businessHours: "09:00 - 18:00" },
+  business: { businessName: "MU Home Service", businessHours: "09:00 - 18:00", businessHoursNote: "শনিবার–বৃহস্পতিবার" },
   service: { advanceType: "fixed", bookingConfirmation: "manual" },
-  appearance: { defaultTheme: "light", stickyHeader: true, backToTop: true, preloader: false, announcementEnabled: false, maintenanceMode: false },
+  appearance: { defaultTheme: "light", stickyHeader: true, backToTop: true, preloader: false, announcementEnabled: false, maintenanceMode: false, maintenanceMessage: "We are performing scheduled maintenance. Please check back soon." },
   seo: {}, notifications: { adminNotifications: true, bookingEmail: true, cancellationEmail: true, whatsappNotifications: false },
   system: { currency: "BDT", dateFormat: "DD/MM/YYYY", timeFormat: "24", sessionTimeout: 60, loginAttemptLimit: 5 }
 };
@@ -1831,7 +1831,7 @@ export default function CMSPage() {
                     <div className="pro-settings-grid">
                       {section.fields.map(([key, label, type]) => <label className={type === "textarea" ? "wide" : ""} key={key}>
                         {label}
-                        {type === "textarea" ? <textarea rows={3} value={siteSettings[section.id]?.[key] ?? ""} onChange={(e) => setSiteSettings((old) => ({ ...old, [section.id]: { ...old[section.id], [key]: e.target.value } }))} /> : type === "checkbox" ? <input type="checkbox" checked={!!siteSettings[section.id]?.[key]} onChange={(e) => setSiteSettings((old) => ({ ...old, [section.id]: { ...old[section.id], [key]: e.target.checked } }))} /> : <input type={type} value={siteSettings[section.id]?.[key] ?? ""} onChange={(e) => setSiteSettings((old) => ({ ...old, [section.id]: { ...old[section.id], [key]: e.target.value } }))} />}
+                        {type === "textarea" ? <textarea rows={3} value={siteSettings[section.id]?.[key] ?? ""} onChange={(e) => setSiteSettings((old) => ({ ...old, [section.id]: { ...old[section.id], [key]: e.target.value } }))} /> : type === "checkbox" ? <input type="checkbox" checked={!!siteSettings[section.id]?.[key]} onChange={(e) => setSiteSettings((old) => ({ ...old, [section.id]: { ...old[section.id], [key]: e.target.checked } }))} /> : type.startsWith("select:") ? <select value={siteSettings[section.id]?.[key] ?? type.split(":")[1].split("|")[0]} onChange={(e) => setSiteSettings((old) => ({ ...old, [section.id]: { ...old[section.id], [key]: e.target.value } }))}>{type.split(":")[1].split("|").map((option) => <option key={option} value={option}>{option}</option>)}</select> : <input type={type} value={siteSettings[section.id]?.[key] ?? ""} onChange={(e) => setSiteSettings((old) => ({ ...old, [section.id]: { ...old[section.id], [key]: e.target.value } }))} />}
                       </label>)}
                     </div>
                     {section.id === "notifications" && <p className="pro-settings-security-note"><ShieldCheck size={15}/> SMTP password, API secrets and provider credentials must be configured and stored securely on the server; they are intentionally not exposed in this form.</p>}
