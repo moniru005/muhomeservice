@@ -14,16 +14,52 @@ test('empty service area configuration does not restrict legacy bookings', () =>
   assert.equal(isServiceAreaAllowed('Any area', []), true);
 });
 
-test('quote applies minimum, emergency fee, VAT and fixed advance with safe rounding', () => {
-  const quote = calculateBookingQuote({ rawPrice: 80, emergencyRequested: true, emergencyAllowed: true, rules: {
-    minimumBooking: 100, emergencyFee: 25, taxRate: 7.5, advanceType: 'fixed', bookingAdvance: 50
-  }});
-  assert.deepEqual(quote, { price:80, minimumBooking:100, baseAmount:100, emergencyFee:25, taxRate:7.5, taxAmount:9.38, totalAmount:134.38, advanceType:'fixed', advanceDue:50 });
+test('multi-service discount, optional duration, VAT and fixed advance are calculated', () => {
+  const quote = calculateBookingQuote({
+    selectedItems: [
+      {id:'ac',name:'AC Service',price:1000,durationMinutes:90,discountPercent:10},
+      {id:'electrical',name:'Electrical',price:500,discountPercent:5},
+    ],
+    emergencyRequested: true, emergencyAllowed: true,
+    rules: { emergencyFee:100, taxRate:10, advanceRequired:true, advanceType:'fixed', bookingAdvance:200 }
+  });
+  assert.equal(quote.totalPrice, 1500);
+  assert.equal(quote.totalDiscount, 125);
+  assert.equal(quote.discountedSubtotal, 1375);
+  assert.equal(quote.totalDurationMinutes, 90);
+  assert.equal(quote.taxAmount, 137.5);
+  assert.equal(quote.emergencyFee, 100);
+  assert.equal(quote.totalAmount, 1612.5);
+  assert.equal(quote.advanceDue, 200);
+  assert.equal(quote.remainingBalance, 1412.5);
+  assert.equal(quote.items[1].durationMinutes, null);
 });
 
-test('percentage advance is capped at total; emergency fee requires enabled emergency service', () => {
-  const quote = calculateBookingQuote({ rawPrice: 200, emergencyRequested: true, emergencyAllowed: false, rules: { taxRate:10, advanceType:'percentage', bookingAdvance:150, emergencyFee:75 } });
-  assert.equal(quote.emergencyFee, 0);
+test('percentage advance is capped at grand total and optional duration remains null', () => {
+  const quote = calculateBookingQuote({
+    selectedItems: [{id:'x',name:'No duration',price:200}],
+    rules: {taxRate:10, advanceRequired:true, advanceType:'percentage', bookingAdvance:150}
+  });
+  assert.equal(quote.totalDurationMinutes, null);
   assert.equal(quote.totalAmount, 220);
   assert.equal(quote.advanceDue, 220);
+  assert.equal(quote.remainingBalance, 0);
+});
+
+test('discount is capped at 100 percent and VAT applies to discounted subtotal', () => {
+  const quote = calculateBookingQuote({
+    selectedItems: [{id:'x',name:'Free promo',price:250,discountPercent:150}],
+    rules: {taxRate:5}
+  });
+  assert.equal(quote.totalDiscount, 250);
+  assert.equal(quote.discountedSubtotal, 0);
+  assert.equal(quote.taxAmount, 0);
+  assert.equal(quote.totalAmount, 0);
+});
+
+test('advance is zero and optional when CMS advanceRequired is disabled', () => {
+  const quote = calculateBookingQuote({ selectedItems: [{id:'x',name:'No advance',price:500}], rules: { advanceRequired:false, advanceType:'fixed', bookingAdvance:100 } });
+  assert.equal(quote.advanceRequired, false);
+  assert.equal(quote.advanceDue, 0);
+  assert.equal(quote.remainingBalance, 500);
 });

@@ -1,302 +1,1394 @@
-import { Router } from 'express';
-import { randomUUID } from 'node:crypto';
-import { getDB } from '../db.js';
-import { services, packages } from '../data.js';
-import { ObjectId } from 'mongodb';
-import { requireAdmin, requireAuth, requireRole } from '../middleware/auth.js';
-import { requirePermission, getRolePermissions } from '../middleware/permissions.js';
-import { notifySmsSafely, notifyWhatsAppSafely } from '../services/integrations.js';
-import { calculateBookingQuote, isServiceAreaAllowed, parseServiceAreas } from '../services/bookingRules.js';
+import { Router } from "express";
+import { randomUUID } from "node:crypto";
+import { getDB } from "../db.js";
+import { services, packages } from "../data.js";
+import { ObjectId } from "mongodb";
+import { requireAdmin, requireAuth, requireRole } from "../middleware/auth.js";
+import {
+  requirePermission,
+  getRolePermissions,
+} from "../middleware/permissions.js";
+import {
+  notifySmsSafely,
+  notifyWhatsAppSafely,
+} from "../services/integrations.js";
+import {
+  calculateBookingQuote,
+  isServiceAreaAllowed,
+  parseServiceAreas,
+} from "../services/bookingRules.js";
 
 const router = Router();
-const statuses = ['New', 'Contacted', 'Assigned', 'On the way', 'Inspection', 'Quotation sent', 'Quotation rejected', 'Approved', 'In progress', 'Completed', 'Cancelled'];
+const statuses = [
+  "Pending Payment",
+  "Pending Confirmation",
+  "Confirmed",
+  "New",
+  "Contacted",
+  "Assigned",
+  "On the way",
+  "Inspection",
+  "Quotation sent",
+  "Quotation rejected",
+  "Approved",
+  "In progress",
+  "Completed",
+  "Cancelled",
+];
 
-router.post('/bookings', requireAuth, requireRole('customer'), async (req, res, next) => {
-  try {
-    if (!ObjectId.isValid(req.user.sub)) return res.status(401).json({ message: 'অ্যাকাউন্ট যাচাই করা যায়নি। আবার লগইন করুন।' });
-    const account = await getDB().collection('users').findOne({ _id: new ObjectId(req.user.sub), role: 'customer' });
-    if (!account) return res.status(403).json({ message: 'শুধু Customer/Client অ্যাকাউন্ট থেকে বুকিং করা যাবে।' });
-    const name = String(account.name || '').trim();
-    const phone = String(account.phone || '').trim();
-    const serviceId = String(req.body.serviceId || '').trim();
-    const address = String(req.body.address || '').trim();
-    const problem = String(req.body.problem || '').trim();
-    if (name.length < 2 || !/^\+?[0-9\s()-]{8,18}$/.test(phone) || !serviceId || address.length < 5 || problem.length < 5) {
-      return res.status(400).json({ message: 'নাম, সঠিক ফোন নম্বর, সার্ভিস, ঠিকানা ও সমস্যার বিবরণ দিন।' });
+router.post(
+  "/bookings",
+  requireAuth,
+  requireRole("customer"),
+  async (req, res, next) => {
+    try {
+      if (!ObjectId.isValid(req.user.sub))
+        return res
+          .status(401)
+          .json({ message: "অ্যাকাউন্ট যাচাই করা যায়নি। আবার লগইন করুন।" });
+      const account = await getDB()
+        .collection("users")
+        .findOne({ _id: new ObjectId(req.user.sub), role: "customer" });
+      if (!account)
+        return res
+          .status(403)
+          .json({
+            message: "শুধু Customer/Client অ্যাকাউন্ট থেকে বুকিং করা যাবে।",
+          });
+      const name = String(account.name || "").trim();
+      const phone = String(account.phone || "").trim();
+      const requestedServiceIds = Array.isArray(req.body.serviceIds)
+        ? [
+            ...new Set(
+              req.body.serviceIds
+                .map((x) => String(x || "").trim())
+                .filter(Boolean),
+            ),
+          ]
+        : [String(req.body.serviceId || "").trim()].filter(Boolean);
+      const serviceId = requestedServiceIds[0] || "";
+      const address = String(req.body.address || "").trim();
+      const problem = String(req.body.problem || "").trim();
+      if (
+        name.length < 2 ||
+        !/^\+?[0-9\s()-]{8,18}$/.test(phone) ||
+        !serviceId ||
+        address.length < 5 ||
+        problem.length < 5
+      ) {
+        return res
+          .status(400)
+          .json({
+            message:
+              "নাম, সঠিক ফোন নম্বর, সার্ভিস, ঠিকানা ও সমস্যার বিবরণ দিন।",
+          });
+      }
+      const db = getDB();
+      const [savedServices, savedPackages, savedSettings] = await Promise.all([
+        db.collection("siteContent").findOne({ _id: "services" }),
+        db.collection("siteContent").findOne({ _id: "packages" }),
+        db.collection("siteContent").findOne({ _id: "generalSettings" }),
+      ]);
+      const currentServices = savedServices?.items || services;
+      const currentPackages = savedPackages?.items || packages;
+      const selectedServices = requestedServiceIds
+        .map((id) => currentServices.find((s) => s.id === id))
+        .filter(Boolean);
+      const selectedPackage =
+        requestedServiceIds.length === 1
+          ? currentPackages.find((p) => p.id === serviceId)
+          : null;
+      if (
+        (!selectedServices.length ||
+          selectedServices.length !== requestedServiceIds.length) &&
+        !selectedPackage
+      )
+        return res.status(400).json({ message: "Invalid service selection" });
+      if (selectedPackage && requestedServiceIds.length !== 1)
+        return res
+          .status(400)
+          .json({
+            message: "একটি প্যাকেজের সঙ্গে আলাদা সার্ভিস নির্বাচন করা যাবে না।",
+          });
+      const selectedService = selectedServices[0] || null;
+      const serviceNames = selectedPackage
+        ? [selectedPackage.name]
+        : selectedServices.map((s) => s.name);
+      const rules = savedSettings?.settings?.service || {};
+      const configuredAreas = parseServiceAreas(rules.serviceAreas);
+      const requestedArea = String(req.body.area || "").trim();
+      if (!isServiceAreaAllowed(requestedArea, configuredAreas)) {
+        return res
+          .status(400)
+          .json({
+            message: `এই মুহূর্তে ${requestedArea || "নির্বাচিত"} এলাকায় বুকিং গ্রহণ করা হচ্ছে না। অনুমোদিত এলাকা: ${configuredAreas.join(", ")}`,
+          });
+      }
+      const rawPrice = selectedPackage
+        ? Number(selectedPackage.price || 0)
+        : selectedServices.reduce((sum, s) => sum + Number(s.price || 0), 0);
+      if (!Number.isFinite(rawPrice) || rawPrice < 0)
+        return res
+          .status(400)
+          .json({
+            message: "সার্ভিসের মূল্য সঠিক নয়। Admin-এর সঙ্গে যোগাযোগ করুন।",
+          });
+      const emergencyRequested = Boolean(
+        req.body.emergency || req.body.preferredTime === "জরুরি",
+      );
+      const emergencyAllowed = Boolean(
+        savedSettings?.settings?.business?.emergencyService,
+      );
+      const quote = calculateBookingQuote({
+        rawPrice,
+        selectedItems: selectedPackage ? [selectedPackage] : selectedServices,
+        rules,
+        emergencyRequested,
+        emergencyAllowed,
+      });
+      const configuredMinimum = Number(rules.minimumBooking || 0);
+      if (Number.isFinite(configuredMinimum) && configuredMinimum > 0 && quote.discountedSubtotal < configuredMinimum) {
+        return res.status(422).json({
+          message: `Discount-এর পর মূল্য নির্ধারিত Minimum Booking (৳${configuredMinimum.toFixed(2)})-এর কম। বুকিং পাঠানো যাবে না।`,
+        });
+      }
+      const {
+        minimumBooking,
+        baseAmount,
+        totalPrice,
+        totalDiscount,
+        discountedSubtotal,
+        totalDurationMinutes,
+        items: pricingBreakdown,
+        remainingBalance,
+        emergencyFee,
+        taxRate,
+        taxAmount,
+        totalAmount,
+        advanceType,
+        advanceDue,
+      } = quote;
+      const advanceRequired = Boolean(rules.advanceRequired === true && advanceDue > 0);
+      const autoConfirm = false; // Payment or no-payment requests always require explicit admin confirmation.
+      const bookingStatus = advanceRequired ? "Pending Payment" : "Pending Confirmation";
+      const userId = account._id.toString();
+      const booking = {
+        ticketId: `MU-${new Date().getFullYear()}-${randomUUID().slice(0, 6).toUpperCase()}`,
+        name,
+        phone,
+        email: String(account.email || "")
+          .trim()
+          .slice(0, 120),
+        serviceId,
+        serviceIds: requestedServiceIds,
+        serviceName: serviceNames.join(" + "),
+        serviceNames,
+        userId,
+        fulfilmentType: selectedServices.some((s) => s.fulfilment === "partner")
+          ? "partner"
+          : "inhouse",
+        partnerId: null,
+        partnerStatus: "not_dispatched",
+        address,
+        area: requestedArea,
+        preferredDate: String(req.body.preferredDate || ""),
+        preferredTime: String(req.body.preferredTime || "যেকোনো সময়"),
+        problem,
+        status: bookingStatus,
+        price: rawPrice,
+        minimumBooking,
+        baseAmount,
+        totalPrice,
+        totalDiscount,
+        discountedSubtotal,
+        totalDurationMinutes,
+        pricingBreakdown,
+        remainingBalance,
+        emergencyFee,
+        taxRate,
+        taxAmount,
+        totalAmount,
+        advanceType,
+        advanceRequired,
+        advanceDue: advanceRequired ? advanceDue : 0,
+        paymentStatus: advanceRequired ? "unpaid" : "not_required",
+        bookingConfirmed: false,
+        paymentExpiresAt: advanceRequired ? new Date(Date.now() + Math.max(15, Math.min(1440, Number(rules.paymentExpiryMinutes || 30))) * 60 * 1000) : null,
+        confirmationRequired: true,
+        cancellationPolicy: String(rules.cancellationPolicy || ""),
+        reschedulePolicy: String(rules.reschedulePolicy || ""),
+        adminNote: "",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+      const insertedBooking = await getDB()
+        .collection("bookings")
+        .insertOne(booking);
+      await Promise.all([
+        notifySmsSafely({
+          to: phone,
+          message: `MU Home Service: আপনার বুকিং ${booking.ticketId} তৈরি হয়েছে। Status: ${bookingStatus}.`,
+          context: "booking-created",
+        }),
+        notifyWhatsAppSafely({
+          to: phone,
+          message: `MU Home Service: আপনার বুকিং ${booking.ticketId} তৈরি হয়েছে। Status: ${bookingStatus}.`,
+          context: "booking-created",
+        }),
+      ]);
+      res
+        .status(201)
+        .json({
+          message: advanceRequired ? "বুকিংয়ের জন্য অগ্রিম পেমেন্ট প্রয়োজন। পেমেন্ট জমা ও যাচাই না হওয়া পর্যন্ত বুকিং নিশ্চিত হবে না।" : "আপনার অনুরোধ Pending Confirmation-এ আছে। Admin অনুমোদনের পর বুকিং নিশ্চিত হবে।",
+          ticketId: booking.ticketId,
+          bookingId: insertedBooking.insertedId.toString(),
+          amount: {
+            base: baseAmount,
+            totalPrice: quote.totalPrice,
+            totalDiscount: quote.totalDiscount,
+            discountedSubtotal: quote.discountedSubtotal,
+            items: quote.items,
+            totalDurationMinutes: quote.totalDurationMinutes,
+            emergencyFee,
+            tax: taxAmount,
+            total: totalAmount,
+            advanceDue,
+            remainingBalance: quote.remainingBalance,
+          },
+          bookingConfirmed: false,
+          advanceRequired,
+          paymentExpiresAt: booking.paymentExpiresAt,
+          cancellationPolicy: booking.cancellationPolicy,
+          reschedulePolicy: booking.reschedulePolicy,
+        });
+    } catch (err) {
+      next(err);
     }
-    const db = getDB();
-    const [savedServices, savedPackages, savedSettings] = await Promise.all([
-      db.collection('siteContent').findOne({_id:'services'}),
-      db.collection('siteContent').findOne({_id:'packages'}),
-      db.collection('siteContent').findOne({_id:'generalSettings'})
-    ]);
-    const currentServices=savedServices?.items||services; const currentPackages=savedPackages?.items||packages;
-    const selectedService=currentServices.find(s => s.id === serviceId);
-    const selectedPackage=currentPackages.find(p => p.id === serviceId);
-    if (!selectedService && !selectedPackage) return res.status(400).json({ message: 'Invalid service selection' });
-    const rules=savedSettings?.settings?.service||{};
-    const configuredAreas = parseServiceAreas(rules.serviceAreas);
-    const requestedArea = String(req.body.area || '').trim();
-    if (!isServiceAreaAllowed(requestedArea, configuredAreas)) {
-      return res.status(400).json({ message: `এই মুহূর্তে ${requestedArea || 'নির্বাচিত'} এলাকায় বুকিং গ্রহণ করা হচ্ছে না। অনুমোদিত এলাকা: ${configuredAreas.join(', ')}` });
-    }
-    const rawPrice = Number(selectedService?.price ?? selectedPackage?.price ?? 0);
-    if (!Number.isFinite(rawPrice) || rawPrice < 0) return res.status(400).json({ message: 'সার্ভিসের মূল্য সঠিক নয়। Admin-এর সঙ্গে যোগাযোগ করুন।' });
-    const emergencyRequested = Boolean(req.body.emergency || req.body.preferredTime === 'জরুরি');
-    const emergencyAllowed = Boolean(savedSettings?.settings?.business?.emergencyService);
-    const configuredMinimum = Number(rules.minimumBooking || 0);
-    if (Number.isFinite(configuredMinimum) && configuredMinimum > 0 && rawPrice < configuredMinimum) {
-      return res.status(422).json({ message: `এই সার্ভিসের মূল্য নির্ধারিত Minimum Booking (৳${configuredMinimum.toFixed(2)})-এর কম। বুকিং পাঠানো যাবে না।` });
-    }
-    const quote = calculateBookingQuote({ rawPrice, rules, emergencyRequested, emergencyAllowed });
-    const { minimumBooking, baseAmount, emergencyFee, taxRate, taxAmount, totalAmount, advanceType, advanceDue } = quote;
-    const autoConfirm = String(rules.bookingConfirmation || 'manual').toLowerCase() === 'auto';
-    const bookingStatus='New';
-    const userId = account._id.toString();
-    const booking = {
-      ticketId: `MU-${new Date().getFullYear()}-${randomUUID().slice(0, 6).toUpperCase()}`,
-      name, phone, email: String(account.email || '').trim().slice(0, 120),
-      serviceId, serviceName: selectedService?.name || selectedPackage?.name, userId,
-      fulfilmentType: currentServices.find(s => s.id === serviceId)?.fulfilment || 'inhouse', partnerId: null, partnerStatus: 'not_dispatched',
-      address, area: requestedArea, preferredDate: String(req.body.preferredDate || ''),
-      preferredTime: String(req.body.preferredTime || 'যেকোনো সময়'), problem, status: bookingStatus,
-      price: rawPrice, minimumBooking, baseAmount, emergencyFee, taxRate, taxAmount, totalAmount, advanceType, advanceDue, paymentStatus: advanceDue>0?'pending':'not_required',
-      bookingConfirmed: autoConfirm, cancellationPolicy: String(rules.cancellationPolicy||''), reschedulePolicy: String(rules.reschedulePolicy||''),
-      adminNote: '', createdAt: new Date(), updatedAt: new Date()
-    };
-    const insertedBooking = await getDB().collection('bookings').insertOne(booking);
-    await Promise.all([notifySmsSafely({ to: phone, message: `MU Home Service: আপনার বুকিং ${booking.ticketId} গ্রহণ করা হয়েছে। Status: ${bookingStatus}${autoConfirm?' (Auto-confirmed)':''}.`, context: 'booking-created' }), notifyWhatsAppSafely({ to: phone, message: `MU Home Service: আপনার বুকিং ${booking.ticketId} গ্রহণ করা হয়েছে। Status: ${bookingStatus}${autoConfirm?' (Auto-confirmed)':''}.`, context: 'booking-created' })]);
-    res.status(201).json({ message: autoConfirm?'আপনার বুকিং স্বয়ংক্রিয়ভাবে নিশ্চিত হয়েছে। প্রয়োজনে আমাদের টিম যোগাযোগ করবে।':'আপনার বুকিং গ্রহণ করা হয়েছে। আমাদের টিম ফোন করে নিশ্চিত করবে।', ticketId: booking.ticketId, bookingId: insertedBooking.insertedId.toString(), amount: {base:baseAmount, emergencyFee, tax:taxAmount, total:totalAmount, advanceDue}, bookingConfirmed:autoConfirm, cancellationPolicy:booking.cancellationPolicy, reschedulePolicy:booking.reschedulePolicy });
-  } catch (err) { next(err); }
-});
+  },
+);
 
+// Recover unpaid advance bookings after refresh/browser close. Ownership is always scoped to the authenticated customer.
+router.get(
+  "/customer/bookings/pending-payment",
+  requireAuth,
+  requireRole("customer"),
+  async (req, res, next) => {
+    try {
+      const now = new Date();
+      const col = getDB().collection("bookings");
+      // Expire overdue requests before returning resumable bookings.
+      await col.updateMany(
+        { userId: req.user.sub, status: "Pending Payment", paymentExpiresAt: { $lte: now } },
+        { $set: { status: "Cancelled", paymentStatus: "expired", paymentExpiredAt: now, updatedAt: now } },
+      );
+      const bookings = await col.find({
+        userId: req.user.sub,
+        status: "Pending Payment",
+        paymentStatus: { $in: ["unpaid", "rejected"] },
+        paymentExpiresAt: { $gt: now },
+        deletedAt: { $exists: false },
+      }, {
+        projection: {
+          ticketId: 1, serviceName: 1, serviceNames: 1, totalAmount: 1,
+          advanceDue: 1, paymentStatus: 1, paymentExpiresAt: 1, createdAt: 1,
+          address: 1, preferredDate: 1, preferredTime: 1,
+        },
+      }).sort({ createdAt: -1 }).limit(50).toArray();
+      res.set("Cache-Control", "no-store");
+      res.json({ bookings: bookings.map((item) => ({
+        bookingId: item._id.toString(),
+        ticketId: item.ticketId,
+        serviceName: item.serviceName || (item.serviceNames || []).join(" + "),
+        totalAmount: Number(item.totalAmount || 0),
+        advanceDue: Number(item.advanceDue || 0),
+        paymentStatus: item.paymentStatus,
+        paymentExpiresAt: item.paymentExpiresAt,
+        createdAt: item.createdAt,
+        address: item.address || "",
+        preferredDate: item.preferredDate || "",
+        preferredTime: item.preferredTime || "",
+      })) });
+    } catch (error) { next(error); }
+  },
+);
 
 // Customer can only view/cancel their own bookings and see their own recorded payments.
-router.get('/customer/bookings', requireAuth, requireRole('customer'), async (req, res, next) => {
-  try {
-    const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
-    const limit = Math.min(100, Math.max(1, Number.parseInt(req.query.limit, 10) || 25));
-    const col = getDB().collection('bookings');
-    const filter = { userId: req.user.sub, deletedAt: { $exists: false } };
-    const [bookings, total] = await Promise.all([col.find(filter).sort({ createdAt: -1 }).skip((page-1)*limit).limit(limit).project({ name:1, ticketId:1, serviceName:1, status:1, createdAt:1, preferredDate:1, preferredTime:1, paymentAmount:1, paymentStatus:1, payments:1, quotedAmount:1, totalAmount:1, partnerId:1 }).toArray(), col.countDocuments(filter)]);
-    const partnerIds=[...new Set(bookings.map(b=>b.partnerId).filter(id=>ObjectId.isValid(id)))];
-    const partners=partnerIds.length?await getDB().collection('users').find({_id:{$in:partnerIds.map(id=>new ObjectId(id))},role:'partner'}).project({name:1,accountStatus:1,'partnerProfile.businessName':1,'partnerProfile.partnerType':1,'partnerProfile.verificationToken':1,'partnerProfile.verificationTokenHash':1,'partnerProfile.documents':1,'partnerProfile.agreementAcceptance':1}).toArray():[];
-    const byId=new Map(partners.map(p=>[p._id.toString(),p]));
-    const enriched=bookings.map(b=>{const p=byId.get(String(b.partnerId||''));const verified=!!(p&&p.accountStatus==='approved'&&p.partnerProfile?.verificationToken&&p.partnerProfile?.verificationTokenHash&&p.partnerProfile?.agreementAcceptance?.version==='2026-10-v1'&&(p.partnerProfile?.documents||[]).some(d=>d.status==='approved'));return {...b,partnerVerification:p?{businessName:p.partnerProfile?.businessName||p.name,status:verified?'ACTIVE':p.accountStatus==='suspended'?'SUSPENDED':'INACTIVE',verificationUrl:verified?`/partner/verify/${p.partnerProfile.verificationToken}`:null}:null};});
-    res.json({ bookings:enriched, pagination: { page, limit, total, pages: Math.max(1, Math.ceil(total/limit)) } });
-  } catch (e) { next(e); }
-});
-router.patch('/customer/bookings/:id/cancel', requireAuth, requireRole('customer'), async (req, res, next) => {
-  try {
-    if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ message: 'Invalid booking ID' });
-    const col = getDB().collection('bookings');
-    const result = await col.updateOne({ _id: new ObjectId(req.params.id), userId: req.user.sub, status: { $in: ['New', 'Contacted'] } }, { $set: { status: 'Cancelled', cancelledAt: new Date(), cancelledBy: req.user.sub, updatedAt: new Date() }, $push: { statusHistory: { status: 'Cancelled', at: new Date(), by: req.user.sub, byRole: 'customer' } } });
-    if (!result.modifiedCount) {
-      const own = await col.findOne({ _id: new ObjectId(req.params.id), userId: req.user.sub }, { projection: { status:1 } });
-      if (!own) return res.status(404).json({ message: 'Booking not found' });
-      return res.status(409).json({ message: 'এই Booking আর Customer নিজে বাতিল করতে পারবেন না। Staff/Admin-এর সঙ্গে যোগাযোগ করুন।' });
+router.get(
+  "/customer/bookings",
+  requireAuth,
+  requireRole("customer"),
+  async (req, res, next) => {
+    try {
+      const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
+      const limit = Math.min(
+        100,
+        Math.max(1, Number.parseInt(req.query.limit, 10) || 25),
+      );
+      const col = getDB().collection("bookings");
+      const filter = { userId: req.user.sub, deletedAt: { $exists: false } };
+      const [bookings, total] = await Promise.all([
+        col
+          .find(filter)
+          .sort({ createdAt: -1 })
+          .skip((page - 1) * limit)
+          .limit(limit)
+          .project({
+            name: 1,
+            ticketId: 1,
+            serviceName: 1,
+            status: 1,
+            createdAt: 1,
+            preferredDate: 1,
+            preferredTime: 1,
+            paymentAmount: 1,
+            paymentStatus: 1,
+            payments: 1,
+            quotedAmount: 1,
+            totalAmount: 1,
+            partnerId: 1,
+          })
+          .toArray(),
+        col.countDocuments(filter),
+      ]);
+      const partnerIds = [
+        ...new Set(
+          bookings.map((b) => b.partnerId).filter((id) => ObjectId.isValid(id)),
+        ),
+      ];
+      const partners = partnerIds.length
+        ? await getDB()
+            .collection("users")
+            .find({
+              _id: { $in: partnerIds.map((id) => new ObjectId(id)) },
+              role: "partner",
+            })
+            .project({
+              name: 1,
+              accountStatus: 1,
+              "partnerProfile.businessName": 1,
+              "partnerProfile.partnerType": 1,
+              "partnerProfile.verificationToken": 1,
+              "partnerProfile.verificationTokenHash": 1,
+              "partnerProfile.documents": 1,
+              "partnerProfile.agreementAcceptance": 1,
+            })
+            .toArray()
+        : [];
+      const byId = new Map(partners.map((p) => [p._id.toString(), p]));
+      const enriched = bookings.map((b) => {
+        const p = byId.get(String(b.partnerId || ""));
+        const verified = !!(
+          p &&
+          p.accountStatus === "approved" &&
+          p.partnerProfile?.verificationToken &&
+          p.partnerProfile?.verificationTokenHash &&
+          p.partnerProfile?.agreementAcceptance?.version === "2026-10-v1" &&
+          (p.partnerProfile?.documents || []).some(
+            (d) => d.status === "approved",
+          )
+        );
+        return {
+          ...b,
+          partnerVerification: p
+            ? {
+                businessName: p.partnerProfile?.businessName || p.name,
+                status: verified
+                  ? "ACTIVE"
+                  : p.accountStatus === "suspended"
+                    ? "SUSPENDED"
+                    : "INACTIVE",
+                verificationUrl: verified
+                  ? `/partner/verify/${p.partnerProfile.verificationToken}`
+                  : null,
+              }
+            : null,
+        };
+      });
+      res.json({
+        bookings: enriched,
+        pagination: {
+          page,
+          limit,
+          total,
+          pages: Math.max(1, Math.ceil(total / limit)),
+        },
+      });
+    } catch (e) {
+      next(e);
     }
-    res.json({ message: 'Booking cancelled successfully', status: 'Cancelled' });
-  } catch (e) { next(e); }
-});
-router.patch('/customer/bookings/:id/reschedule', requireAuth, requireRole('customer'), async (req,res,next)=>{
-  try {
-    const id=ObjectId.isValid(req.params.id)?new ObjectId(req.params.id):null; if(!id)return res.status(400).json({message:'Invalid booking ID'});
-    const preferredDate=String(req.body.preferredDate||'').trim(), preferredTime=String(req.body.preferredTime||'').trim();
-    if(!/^\d{4}-\d{2}-\d{2}$/.test(preferredDate)||!preferredTime||preferredTime.length>80)return res.status(400).json({message:'সঠিক নতুন তারিখ ও সময় দিন।'});
-    const today=new Date();today.setHours(0,0,0,0);const date=new Date(`${preferredDate}T00:00:00`);if(Number.isNaN(date.getTime())||date<today)return res.status(400).json({message:'আগের তারিখে reschedule করা যাবে না।'});
-    const col=getDB().collection('bookings');const b=await col.findOne({_id:id,userId:req.user.sub,deletedAt:{$exists:false}});if(!b)return res.status(404).json({message:'Booking not found'});
-    if(!['New','Contacted'].includes(b.status))return res.status(409).json({message:'শুধু New/Contacted Booking Customer নিজে reschedule করতে পারবেন।'});
-    const now=new Date();const r=await col.updateOne({_id:id,userId:req.user.sub,status:b.status},{$set:{preferredDate,preferredTime,rescheduleRequestedAt:now,updatedAt:now},$push:{statusHistory:{status:b.status,at:now,by:req.user.sub,byRole:'customer',note:`Reschedule requested: ${preferredDate} ${preferredTime}`}}});if(!r.modifiedCount)return res.status(409).json({message:'Booking পরিবর্তিত হয়েছে; refresh করে আবার চেষ্টা করুন।'});
-    await Promise.all([notifySmsSafely({to:b.phone,message:`MU Home Service: ${b.ticketId} বুকিংয়ের নতুন সময়ের অনুরোধ: ${preferredDate}, ${preferredTime}.`,context:'booking-reschedule'}),notifyWhatsAppSafely({to:b.phone,message:`MU Home Service: ${b.ticketId} বুকিংয়ের নতুন সময়ের অনুরোধ: ${preferredDate}, ${preferredTime}.`,context:'booking-reschedule'}),getDB().collection('notifications').insertOne({recipientRole:'staff',type:'booking-reschedule',title:'Booking Reschedule Request',message:`${b.ticketId}: ${preferredDate} ${preferredTime}`,bookingId:id.toString(),createdAt:now,read:false})]);
-    res.json({message:'নতুন তারিখ ও সময়ের অনুরোধ জমা হয়েছে। টিম নিশ্চিত করলে আপনাকে জানানো হবে।',preferredDate,preferredTime});
-  }catch(e){next(e)}
-});
+  },
+);
+router.patch(
+  "/customer/bookings/:id/cancel",
+  requireAuth,
+  requireRole("customer"),
+  async (req, res, next) => {
+    try {
+      if (!ObjectId.isValid(req.params.id))
+        return res.status(400).json({ message: "Invalid booking ID" });
+      const col = getDB().collection("bookings");
+      const result = await col.updateOne(
+        {
+          _id: new ObjectId(req.params.id),
+          userId: req.user.sub,
+          status: { $in: ["New", "Contacted", "Confirmed"] },
+        },
+        {
+          $set: {
+            status: "Cancelled",
+            cancelledAt: new Date(),
+            cancelledBy: req.user.sub,
+            updatedAt: new Date(),
+          },
+          $push: {
+            statusHistory: {
+              status: "Cancelled",
+              at: new Date(),
+              by: req.user.sub,
+              byRole: "customer",
+            },
+          },
+        },
+      );
+      if (!result.modifiedCount) {
+        const own = await col.findOne(
+          { _id: new ObjectId(req.params.id), userId: req.user.sub },
+          { projection: { status: 1 } },
+        );
+        if (!own) return res.status(404).json({ message: "Booking not found" });
+        return res
+          .status(409)
+          .json({
+            message:
+              "এই Booking আর Customer নিজে বাতিল করতে পারবেন না। Staff/Admin-এর সঙ্গে যোগাযোগ করুন।",
+          });
+      }
+      res.json({
+        message: "Booking cancelled successfully",
+        status: "Cancelled",
+      });
+    } catch (e) {
+      next(e);
+    }
+  },
+);
+router.patch(
+  "/customer/bookings/:id/reschedule",
+  requireAuth,
+  requireRole("customer"),
+  async (req, res, next) => {
+    try {
+      const id = ObjectId.isValid(req.params.id)
+        ? new ObjectId(req.params.id)
+        : null;
+      if (!id) return res.status(400).json({ message: "Invalid booking ID" });
+      const preferredDate = String(req.body.preferredDate || "").trim(),
+        preferredTime = String(req.body.preferredTime || "").trim();
+      if (
+        !/^\d{4}-\d{2}-\d{2}$/.test(preferredDate) ||
+        !preferredTime ||
+        preferredTime.length > 80
+      )
+        return res.status(400).json({ message: "সঠিক নতুন তারিখ ও সময় দিন।" });
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const date = new Date(`${preferredDate}T00:00:00`);
+      if (Number.isNaN(date.getTime()) || date < today)
+        return res
+          .status(400)
+          .json({ message: "আগের তারিখে reschedule করা যাবে না।" });
+      const col = getDB().collection("bookings");
+      const b = await col.findOne({
+        _id: id,
+        userId: req.user.sub,
+        deletedAt: { $exists: false },
+      });
+      if (!b) return res.status(404).json({ message: "Booking not found" });
+      if (!["New", "Contacted", "Confirmed"].includes(b.status))
+        return res
+          .status(409)
+          .json({
+            message:
+              "শুধু New/Contacted Booking Customer নিজে reschedule করতে পারবেন।",
+          });
+      const now = new Date();
+      const r = await col.updateOne(
+        { _id: id, userId: req.user.sub, status: b.status },
+        {
+          $set: {
+            preferredDate,
+            preferredTime,
+            rescheduleRequestedAt: now,
+            updatedAt: now,
+          },
+          $push: {
+            statusHistory: {
+              status: b.status,
+              at: now,
+              by: req.user.sub,
+              byRole: "customer",
+              note: `Reschedule requested: ${preferredDate} ${preferredTime}`,
+            },
+          },
+        },
+      );
+      if (!r.modifiedCount)
+        return res
+          .status(409)
+          .json({
+            message: "Booking পরিবর্তিত হয়েছে; refresh করে আবার চেষ্টা করুন।",
+          });
+      await Promise.all([
+        notifySmsSafely({
+          to: b.phone,
+          message: `MU Home Service: ${b.ticketId} বুকিংয়ের নতুন সময়ের অনুরোধ: ${preferredDate}, ${preferredTime}.`,
+          context: "booking-reschedule",
+        }),
+        notifyWhatsAppSafely({
+          to: b.phone,
+          message: `MU Home Service: ${b.ticketId} বুকিংয়ের নতুন সময়ের অনুরোধ: ${preferredDate}, ${preferredTime}.`,
+          context: "booking-reschedule",
+        }),
+        getDB()
+          .collection("notifications")
+          .insertOne({
+            recipientRole: "staff",
+            type: "booking-reschedule",
+            title: "Booking Reschedule Request",
+            message: `${b.ticketId}: ${preferredDate} ${preferredTime}`,
+            bookingId: id.toString(),
+            createdAt: now,
+            read: false,
+          }),
+      ]);
+      res.json({
+        message:
+          "নতুন তারিখ ও সময়ের অনুরোধ জমা হয়েছে। টিম নিশ্চিত করলে আপনাকে জানানো হবে।",
+        preferredDate,
+        preferredTime,
+      });
+    } catch (e) {
+      next(e);
+    }
+  },
+);
 
-router.get('/customer/payments', requireAuth, requireRole('customer'), async (req, res, next) => {
-  try {
-    const bookings = await getDB().collection('bookings').find({ userId: req.user.sub, deletedAt: { $exists: false } }).project({ ticketId:1, serviceName:1, payments:1, paymentAmount:1, paymentStatus:1, quotedAmount:1, totalAmount:1, createdAt:1 }).sort({ createdAt:-1 }).limit(500).toArray();
-    const payments = bookings.flatMap(b => (b.payments || []).map(p => ({ ...p, ticketId: b.ticketId, serviceName: b.serviceName, bookingId: b._id, paymentStatus: b.paymentStatus || 'unpaid' })));
-    res.json({ payments, bookings: bookings.map(b => ({ _id:b._id, ticketId:b.ticketId, serviceName:b.serviceName, paidAmount:Number(b.paymentAmount || (b.payments || []).reduce((n,p)=>n+Number(p.amount||0),0)), expectedAmount:Number(b.totalAmount || b.quotedAmount || 0), paymentStatus:b.paymentStatus || 'unpaid' })) });
-  } catch (e) { next(e); }
-});
+router.get(
+  "/customer/payments",
+  requireAuth,
+  requireRole("customer"),
+  async (req, res, next) => {
+    try {
+      const bookings = await getDB()
+        .collection("bookings")
+        .find({ userId: req.user.sub, deletedAt: { $exists: false } })
+        .project({
+          ticketId: 1,
+          serviceName: 1,
+          payments: 1,
+          paymentAmount: 1,
+          paymentStatus: 1,
+          quotedAmount: 1,
+          totalAmount: 1,
+          createdAt: 1,
+        })
+        .sort({ createdAt: -1 })
+        .limit(500)
+        .toArray();
+      const payments = bookings.flatMap((b) =>
+        (b.payments || []).map((p) => ({
+          ...p,
+          ticketId: b.ticketId,
+          serviceName: b.serviceName,
+          bookingId: b._id,
+          paymentStatus: b.paymentStatus || "unpaid",
+        })),
+      );
+      res.json({
+        payments,
+        bookings: bookings.map((b) => ({
+          _id: b._id,
+          ticketId: b.ticketId,
+          serviceName: b.serviceName,
+          paidAmount: Number(
+            b.paymentAmount ||
+              (b.payments || []).reduce((n, p) => n + Number(p.amount || 0), 0),
+          ),
+          expectedAmount: Number(b.totalAmount || b.quotedAmount || 0),
+          paymentStatus: b.paymentStatus || "unpaid",
+        })),
+      });
+    } catch (e) {
+      next(e);
+    }
+  },
+);
 
-router.get('/tracking/:ticketId', async (req, res, next) => {
+router.get("/tracking/:ticketId", async (req, res, next) => {
   try {
-    const ticketId = String(req.params.ticketId || '').trim().slice(0, 60);
-    if (!ticketId) return res.status(400).json({ message: 'Ticket ID দিন।' });
-    const b = await getDB().collection('bookings').findOne({ ticketId }, { projection: { ticketId:1, serviceName:1, status:1, area:1, createdAt:1, updatedAt:1, preferredDate:1, preferredTime:1 } });
-    if (!b) return res.status(404).json({ message: 'এই Ticket ID পাওয়া যায়নি।' });
+    const ticketId = String(req.params.ticketId || "")
+      .trim()
+      .slice(0, 60);
+    if (!ticketId) return res.status(400).json({ message: "Ticket ID দিন।" });
+    const b = await getDB()
+      .collection("bookings")
+      .findOne(
+        { ticketId },
+        {
+          projection: {
+            ticketId: 1,
+            serviceName: 1,
+            status: 1,
+            area: 1,
+            createdAt: 1,
+            updatedAt: 1,
+            preferredDate: 1,
+            preferredTime: 1,
+          },
+        },
+      );
+    if (!b)
+      return res.status(404).json({ message: "এই Ticket ID পাওয়া যায়নি।" });
     res.json({ booking: b });
-  } catch (err) { next(err); }
+  } catch (err) {
+    next(err);
+  }
 });
 
-router.get('/admin/bookings', requireAdmin, async (req, res, next) => {
+router.get("/admin/bookings", requireAdmin, async (req, res, next) => {
   try {
     const { status, q } = req.query;
     const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
-    const limit = Math.min(100, Math.max(1, Number.parseInt(req.query.limit, 10) || 25));
-    const filter = req.query.includeDeleted === 'true' ? {} : { deletedAt: { $exists: false } };
+    const limit = Math.min(
+      100,
+      Math.max(1, Number.parseInt(req.query.limit, 10) || 25),
+    );
+    const filter =
+      req.query.includeDeleted === "true"
+        ? {}
+        : { deletedAt: { $exists: false } };
     if (status && statuses.includes(status)) filter.status = status;
-    if (q) filter.$or = ['name', 'phone', 'ticketId', 'serviceName'].map(k => ({ [k]: { $regex: String(q).slice(0, 80), $options: 'i' } }));
-    const col = getDB().collection('bookings');
-    const [bookings, total] = await Promise.all([col.find(filter).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit).toArray(), col.countDocuments(filter)]);
-    res.json({ bookings, statuses, pagination: { page, limit, total, pages: Math.max(1, Math.ceil(total / limit)) } });
-  } catch (err) { next(err); }
+    else filter.status = { $ne: "Pending Payment" };
+    if (q)
+      filter.$or = ["name", "phone", "ticketId", "serviceName"].map((k) => ({
+        [k]: { $regex: String(q).slice(0, 80), $options: "i" },
+      }));
+    const col = getDB().collection("bookings");
+    const [bookings, total] = await Promise.all([
+      col
+        .find(filter)
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .toArray(),
+      col.countDocuments(filter),
+    ]);
+    res.json({
+      bookings,
+      statuses,
+      pagination: {
+        page,
+        limit,
+        total,
+        pages: Math.max(1, Math.ceil(total / limit)),
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
 });
 
-router.patch('/bookings/:id/status', requireAuth, async (req, res, next) => {
+router.patch("/bookings/:id/status", requireAuth, async (req, res, next) => {
   try {
-    if (req.user.role === 'staff') {
-      if (!ObjectId.isValid(req.user.sub)) return res.status(403).json({ message: 'Booking status পরিবর্তনের অনুমতি নেই।' });
-      const staff = await getDB().collection('users').findOne({ _id: new ObjectId(req.user.sub), role:'staff', accountStatus:'approved' });
-      if (!staff) return res.status(403).json({ message: 'Approved staff account required' });
-      const { getRolePermissions } = await import('../middleware/permissions.js');
-      const perms = await getRolePermissions('staff');
-      if (!(staff.permissions || []).includes('manageBookings') && !(perms.bookings || []).some(a => ['*','update','status'].includes(a))) return res.status(403).json({ message: 'Role Permission Manager অনুযায়ী Booking status পরিবর্তনের অনুমতি নেই।' });
-    } else if (req.user.role !== 'admin') return res.status(403).json({ message: 'Booking status পরিবর্তনের অনুমতি নেই।' });
-    if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ message:'Invalid booking ID' });
-    const status = String(req.body.status || '');
-    if (!statuses.includes(status)) return res.status(400).json({ message:'Invalid status' });
-    if (req.user.role === 'admin' && status === 'Completed') return res.status(409).json({ message:'Admin সরাসরি Completed করতে পারবেন না। Manual Completion স্ক্রিনে কারণ লিখে override করুন।' });
-    const col = getDB().collection('bookings');
-    const current = await col.findOne({ _id:new ObjectId(req.params.id), deletedAt: { $exists:false } });
-    if (!current) return res.status(404).json({ message:'Booking not found' });
-    if (status === 'Completed' && current.fulfilmentType !== 'inhouse' && current.partnerWorkStatus !== 'completed') return res.status(409).json({ message:'Partner কাজ Customer OTP যাচাই ছাড়া Completed করা যাবে না।' });
+    if (req.user.role === "staff") {
+      if (!ObjectId.isValid(req.user.sub))
+        return res
+          .status(403)
+          .json({ message: "Booking status পরিবর্তনের অনুমতি নেই।" });
+      const staff = await getDB()
+        .collection("users")
+        .findOne({
+          _id: new ObjectId(req.user.sub),
+          role: "staff",
+          accountStatus: "approved",
+        });
+      if (!staff)
+        return res
+          .status(403)
+          .json({ message: "Approved staff account required" });
+      const { getRolePermissions } =
+        await import("../middleware/permissions.js");
+      const perms = await getRolePermissions("staff");
+      if (
+        !(staff.permissions || []).includes("manageBookings") &&
+        !(perms.bookings || []).some((a) =>
+          ["*", "update", "status"].includes(a),
+        )
+      )
+        return res
+          .status(403)
+          .json({
+            message:
+              "Role Permission Manager অনুযায়ী Booking status পরিবর্তনের অনুমতি নেই।",
+          });
+    } else if (req.user.role !== "admin")
+      return res
+        .status(403)
+        .json({ message: "Booking status পরিবর্তনের অনুমতি নেই।" });
+    if (!ObjectId.isValid(req.params.id))
+      return res.status(400).json({ message: "Invalid booking ID" });
+    const status = String(req.body.status || "");
+    if (!statuses.includes(status))
+      return res.status(400).json({ message: "Invalid status" });
+    if (req.user.role === "admin" && status === "Completed")
+      return res
+        .status(409)
+        .json({
+          message:
+            "Admin সরাসরি Completed করতে পারবেন না। Manual Completion স্ক্রিনে কারণ লিখে override করুন।",
+        });
+    const col = getDB().collection("bookings");
+    const current = await col.findOne({
+      _id: new ObjectId(req.params.id),
+      deletedAt: { $exists: false },
+    });
+    if (!current) return res.status(404).json({ message: "Booking not found" });
+    if (status === "Confirmed" && current.advanceRequired && current.paymentStatus !== "verified") return res.status(409).json({ message: "Advance payment verify না হওয়া পর্যন্ত booking confirm করা যাবে না।" });
+    if (current.status === "Pending Payment" && status !== "Cancelled") return res.status(409).json({ message: "Advance payment জমা ও verify না হওয়া পর্যন্ত এই booking-এর status পরিবর্তন করা যাবে না।" });
+    if (current.status === "Pending Confirmation" && !["Confirmed", "Cancelled"].includes(status)) return res.status(409).json({ message: "Pending Confirmation থেকে শুধু Admin Confirm বা Reject/Cancel করতে পারবেন।" });
+    if (status === "Confirmed" && current.status !== "Pending Confirmation") return res.status(409).json({ message: "শুধু Pending Confirmation booking confirm করা যাবে।" });
+    if (status === "Pending Confirmation" && current.advanceRequired && current.paymentStatus !== "verified") return res.status(409).json({ message: "Payment verify না হওয়া পর্যন্ত confirmation queue-তে পাঠানো যাবে না।" });
+    if (
+      status === "Completed" &&
+      current.fulfilmentType !== "inhouse" &&
+      current.partnerWorkStatus !== "completed"
+    )
+      return res
+        .status(409)
+        .json({
+          message: "Partner কাজ Customer OTP যাচাই ছাড়া Completed করা যাবে না।",
+        });
     const now = new Date();
-    const result = await col.updateOne({ _id:new ObjectId(req.params.id), status:current.status, deletedAt: { $exists:false } }, { $set:{ status, updatedAt:now, ...(req.body.adminNote !== undefined ? { adminNote:String(req.body.adminNote).slice(0,1000) } : {}) }, $push:{ statusHistory:{ status, at:now, by:req.user.sub, byRole:req.user.role, adminOverride:status === 'Completed' } } });
-    if (!result.matchedCount) return res.status(404).json({ message:'Booking not found' });
-    const updatedBooking = await getDB().collection('bookings').findOne({ _id:new ObjectId(req.params.id) }, { projection:{ phone:1, ticketId:1 } });
-    if (updatedBooking) await Promise.all([notifySmsSafely({ to: updatedBooking.phone, message: `MU Home Service: বুকিং ${updatedBooking.ticketId}-এর নতুন Status: ${status}.`, context: 'booking-status' }), notifyWhatsAppSafely({ to: updatedBooking.phone, message: `MU Home Service: বুকিং ${updatedBooking.ticketId}-এর নতুন Status: ${status}.`, context: 'booking-status' })]);
-    res.json({ message:'Booking status updated', status });
-  } catch(e) { next(e); }
+    const result = await col.updateOne(
+      {
+        _id: new ObjectId(req.params.id),
+        status: current.status,
+        deletedAt: { $exists: false },
+      },
+      {
+        $set: {
+          status,
+          updatedAt: now,
+          ...(req.body.adminNote !== undefined
+            ? { adminNote: String(req.body.adminNote).slice(0, 1000) }
+            : {}),
+          ...(status === "Cancelled" && Number(current.paymentAmount || 0) > 0 && current.paymentStatus === "verified"
+            ? { refundStatus: "pending_review", refundRequestedAt: now }
+            : {}),
+        },
+        $push: {
+          statusHistory: {
+            status,
+            at: now,
+            by: req.user.sub,
+            byRole: req.user.role,
+            adminOverride: status === "Completed",
+          },
+        },
+      },
+    );
+    if (!result.matchedCount)
+      return res.status(404).json({ message: "Booking not found" });
+    const updatedBooking = await getDB()
+      .collection("bookings")
+      .findOne(
+        { _id: new ObjectId(req.params.id) },
+        { projection: { phone: 1, ticketId: 1 } },
+      );
+    if (updatedBooking)
+      await Promise.all([
+        notifySmsSafely({
+          to: updatedBooking.phone,
+          message: `MU Home Service: বুকিং ${updatedBooking.ticketId}-এর নতুন Status: ${status}.`,
+          context: "booking-status",
+        }),
+        notifyWhatsAppSafely({
+          to: updatedBooking.phone,
+          message: `MU Home Service: বুকিং ${updatedBooking.ticketId}-এর নতুন Status: ${status}.`,
+          context: "booking-status",
+        }),
+      ]);
+    res.json({ message: "Booking status updated", status });
+  } catch (e) {
+    next(e);
+  }
 });
 
-router.get('/bookings/assignable-technicians', requireAuth, async (req, res, next) => {
-  try {
-    if (req.user.role !== 'admin') {
-      const staff = await getDB().collection('users').findOne({ _id: new ObjectId(req.user.sub), role: 'staff', accountStatus: 'approved' });
-      const rp = await getRolePermissions('staff');
-      if (!staff || (!(staff.permissions || []).includes('assignTechnicians') && !(rp.bookings || []).some(a => ['*','assign'].includes(a)))) return res.status(403).json({ message: 'Role Permission Manager অনুযায়ী Technician assign করার অনুমতি নেই।' });
+router.get(
+  "/bookings/assignable-technicians",
+  requireAuth,
+  async (req, res, next) => {
+    try {
+      if (req.user.role !== "admin") {
+        const staff = await getDB()
+          .collection("users")
+          .findOne({
+            _id: new ObjectId(req.user.sub),
+            role: "staff",
+            accountStatus: "approved",
+          });
+        const rp = await getRolePermissions("staff");
+        if (
+          !staff ||
+          (!(staff.permissions || []).includes("assignTechnicians") &&
+            !(rp.bookings || []).some((a) => ["*", "assign"].includes(a)))
+        )
+          return res
+            .status(403)
+            .json({
+              message:
+                "Role Permission Manager অনুযায়ী Technician assign করার অনুমতি নেই।",
+            });
+      }
+      const technicians = await getDB()
+        .collection("users")
+        .find(
+          {
+            role: "technician",
+            technicianStatus: "approved",
+            accountStatus: "approved",
+          },
+          { projection: { name: 1, phone: 1, email: 1 } },
+        )
+        .sort({ name: 1 })
+        .toArray();
+      res.json({ technicians });
+    } catch (err) {
+      next(err);
     }
-    const technicians = await getDB().collection('users').find({ role: 'technician', technicianStatus: 'approved', accountStatus: 'approved' }, { projection: { name: 1, phone: 1, email: 1 } }).sort({ name: 1 }).toArray();
-    res.json({ technicians });
-  } catch (err) { next(err); }
-});
+  },
+);
 
 // Assign one or more approved technicians to a booking. Admins can always assign;
 // approved staff need the explicit bookings:assign permission.
-router.patch('/bookings/:id/technicians', requireAuth, async (req, res, next) => {
-  try {
-    const db = getDB();
-    if (req.user.role !== 'admin') {
-      const staff = await db.collection('users').findOne({ _id: new ObjectId(req.user.sub), role: 'staff', accountStatus: 'approved' });
-      const rp = await getRolePermissions('staff');
-      if (!staff || (!(staff.permissions || []).includes('assignTechnicians') && !(rp.bookings || []).some(a => ['*','assign'].includes(a)))) return res.status(403).json({ message: 'Role Permission Manager অনুযায়ী Technician assign করার অনুমতি নেই।' });
+router.patch(
+  "/bookings/:id/technicians",
+  requireAuth,
+  async (req, res, next) => {
+    try {
+      const db = getDB();
+      if (req.user.role !== "admin") {
+        const staff = await db
+          .collection("users")
+          .findOne({
+            _id: new ObjectId(req.user.sub),
+            role: "staff",
+            accountStatus: "approved",
+          });
+        const rp = await getRolePermissions("staff");
+        if (
+          !staff ||
+          (!(staff.permissions || []).includes("assignTechnicians") &&
+            !(rp.bookings || []).some((a) => ["*", "assign"].includes(a)))
+        )
+          return res
+            .status(403)
+            .json({
+              message:
+                "Role Permission Manager অনুযায়ী Technician assign করার অনুমতি নেই।",
+            });
+      }
+      if (!ObjectId.isValid(req.params.id))
+        return res.status(400).json({ message: "Invalid booking ID" });
+      const ids = [
+        ...new Set(
+          (Array.isArray(req.body.technicianIds)
+            ? req.body.technicianIds
+            : []
+          ).map(String),
+        ),
+      ];
+      if (ids.some((id) => !ObjectId.isValid(id)))
+        return res.status(400).json({ message: "Invalid technician ID" });
+      const technicians = ids.length
+        ? await db
+            .collection("users")
+            .find(
+              {
+                _id: { $in: ids.map((id) => new ObjectId(id)) },
+                role: "technician",
+                technicianStatus: "approved",
+                accountStatus: "approved",
+              },
+              { projection: { name: 1, email: 1, skills: 1, serviceAreas: 1 } },
+            )
+            .toArray()
+        : [];
+      if (technicians.length !== ids.length)
+        return res
+          .status(400)
+          .json({ message: "শুধু অনুমোদিত Technician assign করা যাবে।" });
+      const booking = await db
+        .collection("bookings")
+        .findOne({ _id: new ObjectId(req.params.id) });
+      if (!booking)
+        return res.status(404).json({ message: "Booking not found" });
+      if (["Completed", "Cancelled"].includes(booking.status) && ids.length)
+        return res
+          .status(409)
+          .json({
+            message: `এই ${booking.status} booking-এ technician assign করা যাবে না।`,
+          });
+      const norm = (value) =>
+        String(value || "")
+          .toLocaleLowerCase("en")
+          .replace(/[^a-z0-9\u0980-\u09ff]+/g, " ")
+          .trim();
+      const serviceText = norm(
+        `${booking.serviceId || ""} ${booking.serviceName || ""} ${booking.service || ""}`,
+      );
+      const areaText = norm(
+        `${booking.area || ""} ${booking.address || ""} ${booking.district || ""} ${booking.city || ""} ${booking.location || ""}`,
+      );
+      const incompatible = technicians.filter((t) => {
+        const skills = (t.skills || []).map(norm).filter(Boolean);
+        const areas = (t.serviceAreas || []).map(norm).filter(Boolean);
+        const overlaps = (a, b) => {
+          const aa = a.split(" ").filter((x) => x.length > 1),
+            bb = b.split(" ").filter((x) => x.length > 1);
+          return aa.some((x) => bb.includes(x));
+        };
+        const skillMatch =
+          !skills.length ||
+          skills.some(
+            (x) =>
+              serviceText.includes(x) ||
+              x.includes(serviceText) ||
+              overlaps(x, serviceText),
+          );
+        const areaMatch =
+          !areas.length ||
+          areas.some(
+            (x) =>
+              areaText.includes(x) ||
+              x.includes(areaText) ||
+              overlaps(x, areaText),
+          );
+        return !skillMatch || !areaMatch;
+      });
+      if (incompatible.length)
+        return res
+          .status(400)
+          .json({
+            message: `${incompatible.map((t) => t.name).join(", ")}-এর Skills / Service Areas এই Booking-এর সঙ্গে মেলেনি। Technician-এর Work Preferences যাচাই করুন।`,
+          });
+      // Assignment must not reopen or regress a booking already in progress. Only intake states advance to Assigned.
+      const nextStatus =
+        ids.length && ["New", "Contacted", "Confirmed"].includes(booking.status)
+          ? "Assigned"
+          : booking.status;
+      const result = await db
+        .collection("bookings")
+        .updateOne(
+          { _id: booking._id, status: booking.status },
+          {
+            $set: {
+              technicianIds: ids,
+              technicianId: ids[0] || null,
+              status: nextStatus,
+              updatedAt: new Date(),
+            },
+            $push: {
+              statusHistory: {
+                status: nextStatus,
+                at: new Date(),
+                by: req.user.sub,
+                byRole: req.user.role,
+                note: "Technician assignment updated",
+              },
+            },
+          },
+        );
+      if (!result.modifiedCount)
+        return res
+          .status(409)
+          .json({
+            message: "Booking changed during assignment; refresh and retry.",
+          });
+      res.json({
+        message: "Technician assignment updated",
+        technicianIds: ids,
+        status: nextStatus,
+      });
+    } catch (err) {
+      next(err);
     }
-    if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ message: 'Invalid booking ID' });
-    const ids = [...new Set((Array.isArray(req.body.technicianIds) ? req.body.technicianIds : []).map(String))];
-    if (ids.some(id => !ObjectId.isValid(id))) return res.status(400).json({ message: 'Invalid technician ID' });
-    const technicians = ids.length ? await db.collection('users').find({ _id: { $in: ids.map(id => new ObjectId(id)) }, role: 'technician', technicianStatus: 'approved', accountStatus: 'approved' }, { projection: { name: 1, email: 1, skills:1, serviceAreas:1 } }).toArray() : [];
-    if (technicians.length !== ids.length) return res.status(400).json({ message: 'শুধু অনুমোদিত Technician assign করা যাবে।' });
-    const booking = await db.collection('bookings').findOne({ _id: new ObjectId(req.params.id) });
-    if (!booking) return res.status(404).json({ message: 'Booking not found' });
-    if (['Completed', 'Cancelled'].includes(booking.status) && ids.length) return res.status(409).json({ message: `এই ${booking.status} booking-এ technician assign করা যাবে না।` });
-    const norm = value => String(value || '').toLocaleLowerCase('en').replace(/[^a-z0-9\u0980-\u09ff]+/g,' ').trim();
-    const serviceText = norm(`${booking.serviceId || ''} ${booking.serviceName || ''} ${booking.service || ''}`);
-    const areaText = norm(`${booking.area || ''} ${booking.address || ''} ${booking.district || ''} ${booking.city || ''} ${booking.location || ''}`);
-    const incompatible = technicians.filter(t => {
-      const skills = (t.skills || []).map(norm).filter(Boolean);
-      const areas = (t.serviceAreas || []).map(norm).filter(Boolean);
-      const overlaps = (a,b) => { const aa=a.split(' ').filter(x=>x.length>1), bb=b.split(' ').filter(x=>x.length>1); return aa.some(x=>bb.includes(x)); };
-      const skillMatch = !skills.length || skills.some(x => serviceText.includes(x) || x.includes(serviceText) || overlaps(x,serviceText));
-      const areaMatch = !areas.length || areas.some(x => areaText.includes(x) || x.includes(areaText) || overlaps(x,areaText));
-      return !skillMatch || !areaMatch;
-    });
-    if (incompatible.length) return res.status(400).json({message:`${incompatible.map(t=>t.name).join(', ')}-এর Skills / Service Areas এই Booking-এর সঙ্গে মেলেনি। Technician-এর Work Preferences যাচাই করুন।`});
-    // Assignment must not reopen or regress a booking already in progress. Only intake states advance to Assigned.
-    const nextStatus = ids.length && ['New', 'Contacted'].includes(booking.status) ? 'Assigned' : booking.status;
-    const result = await db.collection('bookings').updateOne({ _id: booking._id, status: booking.status }, { $set: { technicianIds: ids, technicianId: ids[0] || null, status: nextStatus, updatedAt: new Date() }, $push: { statusHistory: { status: nextStatus, at: new Date(), by: req.user.sub, byRole: req.user.role, note: 'Technician assignment updated' } } });
-    if (!result.modifiedCount) return res.status(409).json({ message: 'Booking changed during assignment; refresh and retry.' });
-    res.json({ message: 'Technician assignment updated', technicianIds: ids, status: nextStatus });
-  } catch (err) { next(err); }
-});
-
+  },
+);
 
 // A technician may accept or decline only an assignment that is still awaiting a decision.
-router.patch('/technician/bookings/:id/decision', requireAuth, requireRole('technician'), async (req, res, next) => {
-  try {
-    if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ message:'Invalid booking ID' });
-    const decision = String(req.body.decision || '');
-    if (!['accepted','rejected'].includes(decision)) return res.status(400).json({ message:'Decision must be accepted or rejected' });
-    const db = getDB();
-    const technician = await db.collection('users').findOne({ _id:new ObjectId(req.user.sub), role:'technician', accountStatus:'approved', technicianStatus:'approved' });
-    if (!technician) return res.status(403).json({ message:'Approved Technician account required' });
-    const booking = await db.collection('bookings').findOne({ _id:new ObjectId(req.params.id), $or:[{technicianId:req.user.sub},{technicianIds:req.user.sub}] });
-    if (!booking) return res.status(404).json({ message:'এই Booking আপনার নামে assign করা নেই।' });
-    const decisions = booking.technicianDecisions || {};
-    if (decisions[req.user.sub]) return res.status(409).json({ message:'আপনি ইতিমধ্যে এই assignment-এর সিদ্ধান্ত দিয়েছেন।' });
-    const set = { [`technicianDecisions.${req.user.sub}`]: { decision, at:new Date() }, updatedAt:new Date() };
-    if (decision === 'rejected') {
-      const remaining = (booking.technicianIds || [booking.technicianId].filter(Boolean)).filter(id => id !== req.user.sub);
-      set.technicianIds = remaining; set.technicianId = remaining[0] || null;
-      if (!remaining.length) set.status = 'New';
+router.patch(
+  "/technician/bookings/:id/decision",
+  requireAuth,
+  requireRole("technician"),
+  async (req, res, next) => {
+    try {
+      if (!ObjectId.isValid(req.params.id))
+        return res.status(400).json({ message: "Invalid booking ID" });
+      const decision = String(req.body.decision || "");
+      if (!["accepted", "rejected"].includes(decision))
+        return res
+          .status(400)
+          .json({ message: "Decision must be accepted or rejected" });
+      const db = getDB();
+      const technician = await db
+        .collection("users")
+        .findOne({
+          _id: new ObjectId(req.user.sub),
+          role: "technician",
+          accountStatus: "approved",
+          technicianStatus: "approved",
+        });
+      if (!technician)
+        return res
+          .status(403)
+          .json({ message: "Approved Technician account required" });
+      const booking = await db
+        .collection("bookings")
+        .findOne({
+          _id: new ObjectId(req.params.id),
+          $or: [
+            { technicianId: req.user.sub },
+            { technicianIds: req.user.sub },
+          ],
+        });
+      if (!booking)
+        return res
+          .status(404)
+          .json({ message: "এই Booking আপনার নামে assign করা নেই।" });
+      const decisions = booking.technicianDecisions || {};
+      if (decisions[req.user.sub])
+        return res
+          .status(409)
+          .json({
+            message: "আপনি ইতিমধ্যে এই assignment-এর সিদ্ধান্ত দিয়েছেন।",
+          });
+      const set = {
+        [`technicianDecisions.${req.user.sub}`]: { decision, at: new Date() },
+        updatedAt: new Date(),
+      };
+      if (decision === "rejected") {
+        const remaining = (
+          booking.technicianIds || [booking.technicianId].filter(Boolean)
+        ).filter((id) => id !== req.user.sub);
+        set.technicianIds = remaining;
+        set.technicianId = remaining[0] || null;
+        if (!remaining.length) set.status = "New";
+      }
+      const update = await db
+        .collection("bookings")
+        .updateOne(
+          {
+            _id: booking._id,
+            [`technicianDecisions.${req.user.sub}`]: { $exists: false },
+          },
+          {
+            $set: set,
+            $push: {
+              statusHistory: {
+                status:
+                  decision === "accepted" ? "Assigned" : "Technician rejected",
+                at: new Date(),
+                by: req.user.sub,
+                byRole: "technician",
+              },
+            },
+          },
+        );
+      if (!update.modifiedCount)
+        return res
+          .status(409)
+          .json({
+            message: "Booking decision already changed; refresh and try again.",
+          });
+      res.json({
+        message:
+          decision === "accepted"
+            ? "কাজটি গ্রহণ করেছেন।"
+            : "কাজটি প্রত্যাখ্যান করা হয়েছে; Admin/Staff পুনরায় assign করতে পারবেন।",
+        decision,
+      });
+    } catch (e) {
+      next(e);
     }
-    const update = await db.collection('bookings').updateOne({ _id:booking._id, [`technicianDecisions.${req.user.sub}`]: { $exists:false } }, { $set:set, $push:{ statusHistory:{ status:decision === 'accepted' ? 'Assigned' : 'Technician rejected', at:new Date(), by:req.user.sub, byRole:'technician' } } });
-    if (!update.modifiedCount) return res.status(409).json({ message:'Booking decision already changed; refresh and try again.' });
-    res.json({ message: decision === 'accepted' ? 'কাজটি গ্রহণ করেছেন।' : 'কাজটি প্রত্যাখ্যান করা হয়েছে; Admin/Staff পুনরায় assign করতে পারবেন।', decision });
-  } catch(e) { next(e); }
-});
+  },
+);
 
 // Technician-only work queue and status transitions. Ownership is always checked on the server.
-router.patch('/technician/bookings/:id/status', requireAuth, requireRole('technician'), async (req, res, next) => {
-  try {
-    if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ message: 'Invalid booking ID' });
-    const db = getDB();
-    const technician = await db.collection('users').findOne({ _id: new ObjectId(req.user.sub), role: 'technician', accountStatus: 'approved', technicianStatus: 'approved' });
-    if (!technician) return res.status(403).json({ message: 'অনুমোদিত Technician অ্যাকাউন্ট প্রয়োজন।' });
-    const nextStatus = String(req.body.status || '');
-    const transitions = { 'Assigned': 'On the way', 'On the way': 'Inspection', 'Inspection': 'In progress' }; // Completion requires customer OTP endpoint.
-    const booking = await db.collection('bookings').findOne({ _id: new ObjectId(req.params.id), $or: [{ technicianId: req.user.sub }, { technicianIds: req.user.sub }] });
-    if (!booking) return res.status(404).json({ message: 'এই Booking আপনার নামে assign করা নেই।' });
-    if (transitions[booking.status] !== nextStatus) return res.status(409).json({ message: `এই ধাপে ${booking.status} থেকে ${transitions[booking.status] || 'পরবর্তী কোনো Status'} করা যাবে।` });
-    const now = new Date();
-    const result = await db.collection('bookings').updateOne({ _id: booking._id, status: booking.status, $or: [{ technicianId: req.user.sub }, { technicianIds: req.user.sub }] }, { $set: { status: nextStatus, updatedAt: now, [`statusTimestamps.${nextStatus.replace(/[^a-zA-Z0-9]/g, '_')}`]: now }, $push: { statusHistory: { status: nextStatus, at: now, by: req.user.sub, byRole: 'technician' } } });
-    if (!result.modifiedCount) return res.status(409).json({ message: 'Booking Status পরিবর্তিত হয়েছে। Refresh করে আবার চেষ্টা করুন।' });
-    await notifySmsSafely({ to: booking.phone, message: `MU Home Service: বুকিং ${booking.ticketId}-এর নতুন Status: ${nextStatus}.`, context: 'technician-status' });
-    res.json({ message: 'কাজের Status আপডেট হয়েছে।', status: nextStatus });
-  } catch (err) { next(err); }
-});
+router.patch(
+  "/technician/bookings/:id/status",
+  requireAuth,
+  requireRole("technician"),
+  async (req, res, next) => {
+    try {
+      if (!ObjectId.isValid(req.params.id))
+        return res.status(400).json({ message: "Invalid booking ID" });
+      const db = getDB();
+      const technician = await db
+        .collection("users")
+        .findOne({
+          _id: new ObjectId(req.user.sub),
+          role: "technician",
+          accountStatus: "approved",
+          technicianStatus: "approved",
+        });
+      if (!technician)
+        return res
+          .status(403)
+          .json({ message: "অনুমোদিত Technician অ্যাকাউন্ট প্রয়োজন।" });
+      const nextStatus = String(req.body.status || "");
+      const transitions = {
+        Assigned: "On the way",
+        "On the way": "Inspection",
+        Inspection: "In progress",
+      }; // Completion requires customer OTP endpoint.
+      const booking = await db
+        .collection("bookings")
+        .findOne({
+          _id: new ObjectId(req.params.id),
+          $or: [
+            { technicianId: req.user.sub },
+            { technicianIds: req.user.sub },
+          ],
+        });
+      if (!booking)
+        return res
+          .status(404)
+          .json({ message: "এই Booking আপনার নামে assign করা নেই।" });
+      if (transitions[booking.status] !== nextStatus)
+        return res
+          .status(409)
+          .json({
+            message: `এই ধাপে ${booking.status} থেকে ${transitions[booking.status] || "পরবর্তী কোনো Status"} করা যাবে।`,
+          });
+      const now = new Date();
+      const result = await db
+        .collection("bookings")
+        .updateOne(
+          {
+            _id: booking._id,
+            status: booking.status,
+            $or: [
+              { technicianId: req.user.sub },
+              { technicianIds: req.user.sub },
+            ],
+          },
+          {
+            $set: {
+              status: nextStatus,
+              updatedAt: now,
+              [`statusTimestamps.${nextStatus.replace(/[^a-zA-Z0-9]/g, "_")}`]:
+                now,
+            },
+            $push: {
+              statusHistory: {
+                status: nextStatus,
+                at: now,
+                by: req.user.sub,
+                byRole: "technician",
+              },
+            },
+          },
+        );
+      if (!result.modifiedCount)
+        return res
+          .status(409)
+          .json({
+            message:
+              "Booking Status পরিবর্তিত হয়েছে। Refresh করে আবার চেষ্টা করুন।",
+          });
+      await notifySmsSafely({
+        to: booking.phone,
+        message: `MU Home Service: বুকিং ${booking.ticketId}-এর নতুন Status: ${nextStatus}.`,
+        context: "technician-status",
+      });
+      res.json({ message: "কাজের Status আপডেট হয়েছে।", status: nextStatus });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
 
-router.delete('/admin/bookings/:id', requireAdmin, async (req, res, next) => {
+router.delete("/admin/bookings/:id", requireAdmin, async (req, res, next) => {
   try {
-    if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ message: 'Invalid booking ID' });
+    if (!ObjectId.isValid(req.params.id))
+      return res.status(400).json({ message: "Invalid booking ID" });
     const db = getDB();
     const id = new ObjectId(req.params.id);
-    const booking = await db.collection('bookings').findOne({ _id: id, deletedAt: { $exists: false } });
-    if (!booking) return res.status(404).json({ message: 'Booking not found' });
+    const booking = await db
+      .collection("bookings")
+      .findOne({ _id: id, deletedAt: { $exists: false } });
+    if (!booking) return res.status(404).json({ message: "Booking not found" });
     const [paymentCount, financeCount, refundCount] = await Promise.all([
-      db.collection('onlinePayments').countDocuments({ bookingId: id.toString() }),
-      db.collection('financeEntries').countDocuments({ bookingId: id.toString() }),
-      db.collection('refunds').countDocuments({ bookingId: id.toString() })
+      db
+        .collection("onlinePayments")
+        .countDocuments({ bookingId: id.toString() }),
+      db
+        .collection("financeEntries")
+        .countDocuments({ bookingId: id.toString() }),
+      db.collection("refunds").countDocuments({ bookingId: id.toString() }),
     ]);
     // Never hard-delete bookings with financial relationships. Keep the original ID so invoices,
     // refunds, payment reconciliation and audit trails remain connected.
-    await db.collection('bookings').updateOne({ _id: id, deletedAt: { $exists: false } }, { $set: { deletedAt: new Date(), deletedBy: req.user.sub, deletionReason: String(req.body?.reason || 'Admin archived booking').slice(0, 500), financialRelationshipsPreserved: true, updatedAt: new Date() } });
-    res.json({ message: 'Booking archived; financial records and references were preserved.', archived: true, financialReferences: { onlinePayments: paymentCount, financeEntries: financeCount, refunds: refundCount } });
-  } catch (err) { next(err); }
+    await db
+      .collection("bookings")
+      .updateOne(
+        { _id: id, deletedAt: { $exists: false } },
+        {
+          $set: {
+            deletedAt: new Date(),
+            deletedBy: req.user.sub,
+            deletionReason: String(
+              req.body?.reason || "Admin archived booking",
+            ).slice(0, 500),
+            financialRelationshipsPreserved: true,
+            updatedAt: new Date(),
+          },
+        },
+      );
+    res.json({
+      message:
+        "Booking archived; financial records and references were preserved.",
+      archived: true,
+      financialReferences: {
+        onlinePayments: paymentCount,
+        financeEntries: financeCount,
+        refunds: refundCount,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
 });
 
-router.get('/admin/stats', requireAdmin, async (_req, res, next) => {
+router.get("/admin/stats", requireAdmin, async (_req, res, next) => {
   try {
-    const col = getDB().collection('bookings');
+    const col = getDB().collection("bookings");
     const [total, fresh, progress, completed] = await Promise.all([
-      col.countDocuments(), col.countDocuments({ status: 'New' }),
-      col.countDocuments({ status: { $in: ['Assigned', 'On the way', 'Inspection', 'Quotation sent', 'Approved', 'In progress'] } }),
-      col.countDocuments({ status: 'Completed' })
+      col.countDocuments(),
+      col.countDocuments({ status: "New" }),
+      col.countDocuments({
+        status: {
+          $in: [
+            "Assigned",
+            "On the way",
+            "Inspection",
+            "Quotation sent",
+            "Approved",
+            "In progress",
+          ],
+        },
+      }),
+      col.countDocuments({ status: "Completed" }),
     ]);
     res.json({ total, fresh, progress, completed });
-  } catch (err) { next(err); }
+  } catch (err) {
+    next(err);
+  }
 });
+
+// Customer submits offline advance payment proof. This never confirms a booking.
+router.post("/customer/bookings/:id/offline-payment", requireAuth, requireRole("customer"), async (req, res, next) => {
+  try {
+    if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ message: "Invalid booking ID" });
+    const db = getDB();
+    const booking = await db.collection("bookings").findOne({ _id: new ObjectId(req.params.id), userId: req.user.sub });
+    if (!booking) return res.status(404).json({ message: "Booking not found" });
+    if (!booking.advanceRequired || Number(booking.advanceDue || 0) <= 0) return res.status(409).json({ message: "এই বুকিংয়ের জন্য Advance Payment প্রয়োজন নেই।" });
+    if (booking.status !== "Pending Payment") return res.status(409).json({ message: "এই বুকিংয়ে আর Payment proof জমা নেওয়া যাবে না।" });
+    if (booking.paymentExpiresAt && new Date(booking.paymentExpiresAt) < new Date()) {
+      await db.collection("bookings").updateOne({ _id: booking._id, status: "Pending Payment" }, { $set: { status: "Cancelled", paymentStatus: "expired", paymentExpiredAt: new Date(), updatedAt: new Date() } });
+      return res.status(410).json({ message: "Payment-এর সময়সীমা শেষ হয়েছে। নতুন করে বুকিং করুন।" });
+    }
+    const method = String(req.body.method || "").trim().toLowerCase();
+    const senderPhone = String(req.body.senderPhone || "").trim().slice(0, 30);
+    const transactionId = String(req.body.transactionId || "").trim().slice(0, 100);
+    const proofUrl = String(req.body.proofUrl || "").trim().slice(0, 500);
+    if (!["bkash", "nagad", "rocket", "bank", "other"].includes(method) || transactionId.length < 5 || senderPhone.length < 8)
+      return res.status(400).json({ message: "Payment method, Sender Number এবং সঠিক Transaction ID দিন।" });
+    await db.collection("offlinePaymentSubmissions").createIndex({ method: 1, transactionId: 1 }, { unique: true, name: "uniq_offline_method_transaction" });
+    const duplicate = await db.collection("offlinePaymentSubmissions").findOne({ method, transactionId });
+    if (duplicate) return res.status(409).json({ message: "এই Transaction ID আগে জমা দেওয়া হয়েছে।" });
+    const payment = { paymentId: randomUUID(), bookingId: booking._id.toString(), ticketId: booking.ticketId, userId: req.user.sub, amount: Number(booking.advanceDue), method, senderPhone, transactionId, proofUrl, status: "submitted", submittedAt: new Date(), expiresAt: booking.paymentExpiresAt || null };
+    try { await db.collection("offlinePaymentSubmissions").insertOne(payment); }
+    catch (insertError) { if (insertError?.code === 11000) return res.status(409).json({ message: "এই Transaction ID আগে জমা দেওয়া হয়েছে।" }); throw insertError; }
+    await db.collection("bookings").updateOne({ _id: booking._id, status: "Pending Payment" }, { $set: { paymentStatus: "submitted", paymentSubmissionId: payment.paymentId, updatedAt: new Date() } });
+    res.status(201).json({ message: "Payment proof জমা হয়েছে। যাচাই শেষ না হওয়া পর্যন্ত বুকিং নিশ্চিত হবে না।", payment: { paymentId: payment.paymentId, amount: payment.amount, status: payment.status } });
+  } catch (e) { next(e); }
+});
+
+router.get("/admin/offline-payments", requireAdmin, async (_req, res, next) => {
+  try {
+    const db = getDB();
+    await db.collection("bookings").updateMany({ status: "Pending Payment", paymentExpiresAt: { $lte: new Date() } }, { $set: { status: "Cancelled", paymentStatus: "expired", paymentExpiredAt: new Date(), updatedAt: new Date() } });
+    const payments = await db.collection("offlinePaymentSubmissions").find({ status: "submitted" }).sort({ submittedAt: -1 }).limit(200).toArray();
+    res.json({ payments });
+  } catch (e) { next(e); }
+});
+
+router.patch("/admin/offline-payments/:paymentId/verify", requireAdmin, async (req, res, next) => {
+  try {
+    const db = getDB();
+    const payment = await db.collection("offlinePaymentSubmissions").findOne({ paymentId: req.params.paymentId, status: "submitted" });
+    if (!payment) return res.status(404).json({ message: "Pending payment submission পাওয়া যায়নি।" });
+    const booking = await db.collection("bookings").findOne({ _id: new ObjectId(payment.bookingId), status: "Pending Payment", paymentStatus: "submitted" });
+    if (!booking) return res.status(409).json({ message: "Booking আর Pending Payment অবস্থায় নেই।" });
+    if (booking.paymentExpiresAt && new Date(booking.paymentExpiresAt) < new Date()) return res.status(410).json({ message: "Payment submission-এর সময়সীমা শেষ।" });
+    const verifiedAt = new Date();
+    const claimed = await db.collection("offlinePaymentSubmissions").updateOne({ _id: payment._id, status: "submitted" }, { $set: { status: "verified", verifiedAt, verifiedBy: req.user.email || req.user.sub } });
+    if (!claimed.modifiedCount) return res.status(409).json({ message: "এই Payment ইতোমধ্যে অন্য Admin যাচাই করেছেন।" });
+    const bookingUpdate = await db.collection("bookings").updateOne({ _id: booking._id, status: "Pending Payment", paymentStatus: "submitted" }, { $set: { status: "Pending Confirmation", paymentStatus: "verified", paymentAmount: Number(payment.amount), payments: [{ paymentId: payment.paymentId, amount: Number(payment.amount), method: payment.method, reference: payment.transactionId, senderPhone: payment.senderPhone, receivedAt: verifiedAt, receivedBy: req.user.email || req.user.sub, verified: true }], paymentVerifiedAt: verifiedAt, updatedAt: verifiedAt } });
+    if (!bookingUpdate.modifiedCount) { await db.collection("offlinePaymentSubmissions").updateOne({ _id: payment._id, status: "verified" }, { $set: { status: "reconciliation_required", reconciliationReason: "Booking status changed during verification" } }); return res.status(409).json({ message: "Booking status বদলে গেছে; reconciliation প্রয়োজন।" }); }
+    await db.collection("financeEntries").updateOne({ sourceKey: `offline-payment:${payment.paymentId}` }, { $setOnInsert: { type: "income", category: "Service advance", amount: Number(payment.amount), note: `${booking.ticketId} · ${payment.method} · ${payment.transactionId}`, date: verifiedAt, createdAt: verifiedAt, createdBy: req.user.email || req.user.sub, sourceType: "offline-payment", sourceId: booking._id.toString(), sourceKey: `offline-payment:${payment.paymentId}`, bookingId: booking._id.toString(), ticketId: booking.ticketId, paymentMethod: payment.method, reference: payment.transactionId } }, { upsert: true });
+    res.json({ message: "Payment verified. Booking এখন Admin Confirmation Queue-তে আছে।", bookingStatus: "Pending Confirmation", paymentStatus: "verified" });
+  } catch (e) { next(e); }
+});
+
+router.patch("/admin/offline-payments/:paymentId/reject", requireAdmin, async (req, res, next) => {
+  try {
+    const db = getDB();
+    const payment = await db.collection("offlinePaymentSubmissions").findOne({ paymentId: req.params.paymentId, status: "submitted" });
+    if (!payment) return res.status(404).json({ message: "Pending payment submission পাওয়া যায়নি।" });
+    const reason = String(req.body.reason || "Payment proof could not be verified").slice(0, 300);
+    await db.collection("offlinePaymentSubmissions").updateOne({ _id: payment._id, status: "submitted" }, { $set: { status: "rejected", rejectionReason: reason, rejectedAt: new Date(), rejectedBy: req.user.email || req.user.sub } });
+    await db.collection("bookings").updateOne({ _id: new ObjectId(payment.bookingId), status: "Pending Payment" }, { $set: { paymentStatus: "rejected", paymentRejectionReason: reason, updatedAt: new Date() } });
+    res.json({ message: "Payment proof rejected. Customer can submit a corrected proof before expiry." });
+  } catch (e) { next(e); }
+});
+
+
+router.get("/admin/offline-refunds", requireAdmin, async (_req, res, next) => {
+  try {
+    const bookings = await getDB().collection("bookings").find({ refundStatus: "pending_review" }).sort({ refundRequestedAt: -1 }).limit(100).toArray();
+    res.json({ bookings });
+  } catch (e) { next(e); }
+});
+
+router.patch("/admin/bookings/:id/offline-refund", requireAdmin, async (req, res, next) => {
+  try {
+    if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ message: "Invalid booking ID" });
+    const db = getDB();
+    const booking = await db.collection("bookings").findOne({ _id: new ObjectId(req.params.id), refundStatus: "pending_review", status: "Cancelled" });
+    if (!booking) return res.status(404).json({ message: "Refund review item পাওয়া যায়নি।" });
+    const reference = String(req.body.reference || "").trim().slice(0, 100);
+    if (reference.length < 4) return res.status(400).json({ message: "Refund transaction/reference দিন।" });
+    const amount = Number(booking.paymentAmount || 0);
+    const refundedAt = new Date();
+    await db.collection("bookings").updateOne({ _id: booking._id, refundStatus: "pending_review" }, { $set: { refundStatus: "refunded", refundedAmount: amount, refundReference: reference, refundedAt, refundedBy: req.user.email || req.user.sub, updatedAt: refundedAt } });
+    await db.collection("financeEntries").updateOne({ sourceKey: `offline-refund:${booking._id}` }, { $setOnInsert: { type: "expense", category: "Customer refund", amount, note: `${booking.ticketId} · Offline advance refund · ${reference}`, date: refundedAt, createdAt: refundedAt, createdBy: req.user.email || req.user.sub, sourceType: "offline-refund", sourceId: booking._id.toString(), sourceKey: `offline-refund:${booking._id}`, bookingId: booking._id.toString(), ticketId: booking.ticketId, paymentMethod: "refund", reference } }, { upsert: true });
+    res.json({ message: "Refund recorded in Income-Expense Ledger.", refundStatus: "refunded", amount });
+  } catch (e) { next(e); }
+});
+
 export { statuses };
 export default router;

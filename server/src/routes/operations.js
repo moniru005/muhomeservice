@@ -234,39 +234,81 @@ router.post(
         return res
           .status(400)
           .json({ message: "Valid quotation items are required" });
-      const subtotal = items.reduce((n, x) => n + x.quantity * x.unitPrice, 0),
-        discount = Math.max(0, Number(req.body.discount) || 0);
+      const roundMoney = value => Math.round((Number(value) + Number.EPSILON) * 100) / 100;
+      const subtotal = roundMoney(items.reduce((n, x) => n + x.quantity * x.unitPrice, 0));
+      const discountType = req.body.discountType === "percent" ? "percent" : "fixed";
+      const discountValue = Math.max(0, Number(req.body.discountValue ?? req.body.discount) || 0);
+      if (discountType === "percent" && discountValue > 100)
+        return res.status(400).json({ message: "Percentage discount cannot exceed 100%" });
+      const discount = roundMoney(discountType === "percent" ? subtotal * discountValue / 100 : discountValue);
       if (discount > subtotal)
-        return res
-          .status(400)
-          .json({ message: "Discount cannot exceed subtotal" });
+        return res.status(400).json({ message: "Discount cannot exceed subtotal" });
+      const additionalChargeInput = req.body.additionalCharge === undefined ? 0 : Number(req.body.additionalCharge);
+      if (!Number.isFinite(additionalChargeInput) || additionalChargeInput < 0)
+        return res.status(400).json({ message: "Additional charge must be a valid non-negative amount" });
+      const additionalCharge = roundMoney(additionalChargeInput);
+      const additionalChargeLabel = String(req.body.additionalChargeLabel || "Additional charge").trim().slice(0, 120);
+      const taxRateInput = req.body.taxRate === undefined ? 0 : Number(req.body.taxRate);
+      if (!Number.isFinite(taxRateInput) || taxRateInput < 0 || taxRateInput > 100)
+        return res.status(400).json({ message: "Tax/VAT rate must be between 0 and 100%" });
+      const taxRate = taxRateInput;
+      const taxableAmount = roundMoney(Math.max(0, subtotal - discount) + additionalCharge);
+      const taxAmount = roundMoney(taxableAmount * taxRate / 100);
+      const total = roundMoney(taxableAmount + taxAmount);
+      const quotationsCol = db().collection("quotations");
+      const previous = await quotationsCol.find({ bookingId: id.toString() }).sort({ versionNo: -1, createdAt: -1 }).toArray();
+      const versionNo = Math.max(previous.length, previous.reduce((max, item) => Math.max(max, Number(item.versionNo) || 0), 0)) + 1;
+      const revisionReason = String(req.body.revisionReason || "").trim().slice(0, 1000);
+      if (versionNo > 1 && revisionReason.length < 5)
+        return res.status(400).json({ message: "Revised Quotation-এর কারণ কমপক্ষে ৫ অক্ষরে লিখুন।" });
+      const paidToDate = roundMoney(Number(b.paymentAmount || 0));
+      const previousApprovedQuote = b.approvedQuotationId
+        ? await quotationsCol.findOne({ quotationId: b.approvedQuotationId, bookingId: id.toString(), status: "approved" })
+        : null;
+      // If the previous approved quote is fully settled, treat the new quote as
+      // supplemental work; otherwise it is a revised total with prior payments credited.
+      const isSupplemental = Boolean(previousApprovedQuote && paidToDate >= roundMoney(Number(previousApprovedQuote.total || 0)) && paidToDate > 0);
+      const payableTotal = roundMoney(isSupplemental ? paidToDate + total : total);
+      const balanceDue = roundMoney(Math.max(0, payableTotal - paidToDate));
+      const openCheckout = await db().collection("onlinePayments").findOne({ bookingId: id.toString(), status: { $in: ["creating", "pending", "settling", "reconciliation_required"] } });
+      if (openCheckout) return res.status(409).json({ message: "এই Booking-এর একটি Payment Checkout এখনো সক্রিয়। Checkout সম্পন্ন বা মেয়াদোত্তীর্ণ হওয়ার পর Revised Quotation তৈরি করুন।" });
+      const now = new Date();
+      const validUntilInput = req.body.validUntil ? new Date(`${String(req.body.validUntil).slice(0, 10)}T23:59:59.999+06:00`) : null;
+      if (req.body.validUntil && (!validUntilInput || Number.isNaN(validUntilInput.getTime()) || validUntilInput.getTime() < now.getTime()))
+        return res.status(400).json({ message: "Quotation Valid Until আজকের তারিখ বা ভবিষ্যতের তারিখ হতে হবে।" });
+      const latestInspection = req.body.attachLatestInspection === false ? null : await db().collection("serviceReports").find({ bookingId: id.toString() }).sort({ createdAt: -1 }).limit(1).next();
       const q = {
-        quotationId: randomUUID(),
-        bookingId: id.toString(),
-        ticketId: b.ticketId,
-        items,
-        subtotal,
-        discount,
-        total: subtotal - discount,
-        status: "pending",
-        notes: String(req.body.notes || "").slice(0, 2000),
-        createdAt: new Date(),
-        createdBy: req.user.sub,
-        createdByEmail: req.user.email,
+        quotationId: randomUUID(), bookingId: id.toString(), ticketId: b.ticketId,
+        versionNo, revisionReason, isActive: true,
+        items, subtotal, discount, discountType, discountValue,
+        additionalCharge, additionalChargeLabel, taxRate, taxAmount, total,
+        paidToDateAtCreation: paidToDate, isSupplemental, payableTotal, balanceDue,
+        status: "pending", notes: String(req.body.notes || "").slice(0, 2000),
+        validUntil: validUntilInput,
+        estimatedCompletion: String(req.body.estimatedCompletion || "").trim().slice(0, 160),
+        paymentTerms: String(req.body.paymentTerms || "").trim().slice(0, 2000),
+        warranty: String(req.body.warranty || "").trim().slice(0, 2000),
+        includedServices: String(req.body.includedServices || "").trim().slice(0, 2000),
+        excludedServices: String(req.body.excludedServices || "").trim().slice(0, 2000),
+        customerInstructions: String(req.body.customerInstructions || "").trim().slice(0, 2000),
+        inspectionReport: latestInspection ? { reportId: latestInspection.reportId, createdAt: latestInspection.createdAt, diagnosis: String(latestInspection.diagnosis || "").slice(0, 3000), workDone: String(latestInspection.workDone || "").slice(0, 5000), notes: String(latestInspection.notes || "").slice(0, 2000), evidencePhotos: (latestInspection.evidencePhotos || []).slice(0, 10).map(photo => ({ url: String(photo.url || ""), name: String(photo.name || "") })).filter(photo => photo.url) } : null,
+        createdAt: now, createdBy: req.user.sub, createdByEmail: req.user.email,
       };
-      await db().collection("quotations").insertOne(q);
-      await db()
-        .collection("bookings")
-        .updateOne(
-          { _id: id },
-          {
-            $set: {
-              status: "Quotation sent",
-              quotedAmount: q.total,
-              updatedAt: new Date(),
-            },
-          },
-        );
+      // Preserve every old version, but make it impossible to approve an outdated pending quote.
+      await quotationsCol.updateMany({ bookingId: id.toString(), isActive: { $ne: false } }, {
+        $set: { isActive: false, supersededAt: now, supersededBy: q.quotationId },
+        $unset: { active: "" },
+      });
+      await quotationsCol.updateMany({ bookingId: id.toString(), status: "pending" }, {
+        $set: { status: "superseded", supersededAt: now, supersededBy: q.quotationId },
+      });
+      await quotationsCol.insertOne(q);
+      await db().collection("bookings").updateOne({ _id: id }, { $set: {
+        status: "Quotation sent", quotedAmount: q.total,
+        activeQuotationId: q.quotationId, activeQuotationVersion: versionNo,
+        quotationPayableTotal: payableTotal, quotationBalanceDue: balanceDue,
+        updatedAt: now,
+      }, $unset: { approvedQuotationId: "", approvedQuotationVersion: "" } });
       await db()
         .collection("notifications")
         .insertOne({
@@ -302,7 +344,8 @@ router.get(
         .sort({ createdAt: -1 })
         .limit(50)
         .toArray();
-      res.json({ quotations });
+      const currentId = b.activeQuotationId || quotations[0]?.quotationId;
+      res.json({ quotations: quotations.map(q => ({ ...q, isActive: q.quotationId === currentId, isApprovedVersion: q.quotationId === b.approvedQuotationId })) });
     } catch (e) {
       next(e);
     }
@@ -332,32 +375,27 @@ router.patch(
           .status(403)
           .json({ message: "This quotation does not belong to your account" });
       if (q.status !== "pending")
-        return res
-          .status(409)
-          .json({ message: "Quotation has already been decided" });
-      await db()
-        .collection("quotations")
-        .updateOne(
-          { _id: q._id, status: "pending" },
-          {
-            $set: {
-              status: decision,
-              decidedAt: new Date(),
-              decidedBy: req.user.sub,
-            },
-          },
-        );
-      await db()
-        .collection("bookings")
-        .updateOne(
-          { _id: b._id },
-          {
-            $set: {
-              status: decision === "approved" ? "Approved" : "Quotation rejected",
-              updatedAt: new Date(),
-            },
-          },
-        );
+        return res.status(409).json({ message: "এই Quotation Version-এ সিদ্ধান্ত দেওয়া হয়ে গেছে বা এটি আর সক্রিয় নয়।" });
+      if (q.validUntil && new Date(q.validUntil).getTime() < Date.now()) {
+        await db().collection("quotations").updateOne({ _id: q._id, status: "pending" }, { $set: { status: "expired", expiredAt: new Date() } });
+        return res.status(410).json({ message: "এই Quotation-এর মেয়াদ শেষ হয়েছে। Staff-এর কাছে নতুন Quotation চান।" });
+      }
+      if (b.activeQuotationId && b.activeQuotationId !== q.quotationId)
+        return res.status(409).json({ message: "এটি পুরোনো Quotation Version। সর্বশেষ Version পর্যালোচনা করুন।" });
+      const now = new Date();
+      const changed = await db().collection("quotations").updateOne(
+        { _id: q._id, status: "pending", $or: [{ isActive: true }, { isActive: { $exists: false } }] },
+        { $set: { status: decision, decidedAt: now, decidedBy: req.user.sub } },
+      );
+      if (!changed.modifiedCount) return res.status(409).json({ message: "Quotation ইতিমধ্যে পরিবর্তিত হয়েছে। Refresh করে আবার চেষ্টা করুন।" });
+      await db().collection("bookings").updateOne({ _id: b._id, ...(b.activeQuotationId ? { activeQuotationId: q.quotationId } : {}) }, {
+        $set: {
+          status: decision === "approved" ? "Approved" : "Quotation rejected",
+          ...(decision === "approved" ? { approvedQuotationId: q.quotationId, approvedQuotationVersion: Number(q.versionNo) || 1, quotedAmount: q.total } : {}),
+          updatedAt: now,
+        },
+        ...(decision === "rejected" ? { $unset: { approvedQuotationId: "", approvedQuotationVersion: "" } } : {}),
+      });
       await db()
         .collection("notifications")
         .insertOne({
@@ -376,7 +414,7 @@ router.patch(
   },
 );
 router.post('/operations/customer/bookings/:id/request-quotation', requireAuth, requireRole('customer'), async(req,res,next)=>{
-  try { const id=oid(req.params.id);if(!id)return res.status(400).json({message:'Invalid booking ID'});const col=db().collection('bookings');const b=await col.findOne({_id:id,userId:req.user.sub,deletedAt:{$exists:false}});if(!b)return res.status(404).json({message:'Booking not found'});if(!['Quotation rejected','Inspection'].includes(b.status))return res.status(409).json({message:'নতুন Quotation চাওয়ার জন্য Booking-এর Status Quotation rejected বা Inspection হতে হবে।'});const now=new Date();const result=await col.updateOne({_id:id,userId:req.user.sub,status:b.status},{$set:{status:'Inspection',quotationReRequestAt:now,updatedAt:now},$inc:{quotationReRequestCount:1},$push:{statusHistory:{status:'Inspection',at:now,by:req.user.sub,byRole:'customer',note:'Customer requested a new quotation'}}});if(!result.modifiedCount)return res.status(409).json({message:'Booking পরিবর্তিত হয়েছে; refresh করে আবার চেষ্টা করুন।'});await db().collection('notifications').insertOne({recipientRole:'staff',type:'quotation-request',title:'নতুন Quotation অনুরোধ',message:`${b.ticketId}: Customer নতুন Quotation চেয়েছেন`,bookingId:id.toString(),createdAt:now,read:false});res.json({message:'নতুন Quotation-এর অনুরোধ Staff/Admin-এর কাছে পাঠানো হয়েছে।'}); }catch(e){next(e)}
+  try { const id=oid(req.params.id);if(!id)return res.status(400).json({message:'Invalid booking ID'});const col=db().collection('bookings');const b=await col.findOne({_id:id,userId:req.user.sub,deletedAt:{$exists:false}});if(!b)return res.status(404).json({message:'Booking not found'});if(!['Quotation rejected','Inspection','Quotation sent'].includes(b.status))return res.status(409).json({message:'নতুন Quotation চাওয়ার জন্য Booking-এর Status Quotation rejected, মেয়াদোত্তীর্ণ Quotation বা Inspection হতে হবে।'});if(b.status==='Quotation sent'){const activeQuote=await db().collection('quotations').findOne({quotationId:b.activeQuotationId,bookingId:id.toString()});if(!activeQuote?.validUntil||new Date(activeQuote.validUntil).getTime()>=Date.now())return res.status(409).json({message:'বর্তমান Quotation-এর মেয়াদ শেষ হয়নি।'});await db().collection('quotations').updateOne({_id:activeQuote._id,status:'pending'},{$set:{status:'expired',expiredAt:new Date()}});}const now=new Date();const result=await col.updateOne({_id:id,userId:req.user.sub,status:b.status},{$set:{status:'Inspection',quotationReRequestAt:now,updatedAt:now},$inc:{quotationReRequestCount:1},$push:{statusHistory:{status:'Inspection',at:now,by:req.user.sub,byRole:'customer',note:'Customer requested a new quotation'}}});if(!result.modifiedCount)return res.status(409).json({message:'Booking পরিবর্তিত হয়েছে; refresh করে আবার চেষ্টা করুন।'});await db().collection('notifications').insertOne({recipientRole:'staff',type:'quotation-request',title:'নতুন Quotation অনুরোধ',message:`${b.ticketId}: Customer নতুন Quotation চেয়েছেন`,bookingId:id.toString(),createdAt:now,read:false});res.json({message:'নতুন Quotation-এর অনুরোধ Staff/Admin-এর কাছে পাঠানো হয়েছে।'}); }catch(e){next(e)}
 });
 
 router.get(
@@ -387,13 +425,15 @@ router.get(
     try {
       // Fetch only this customer's booking IDs, then query their quotations in one indexed query.
       const customerBookings = await db().collection("bookings")
-        .find({ userId: req.user.sub }).project({ ticketId:1, serviceName:1, status:1, createdAt:1 }).toArray();
+        .find({ userId: req.user.sub }).project({ ticketId:1, serviceName:1, status:1, createdAt:1, activeQuotationId:1, activeQuotationVersion:1, approvedQuotationId:1 }).toArray();
       const byId = new Map(customerBookings.map(b => [b._id.toString(), b]));
       const bookingIds = [...byId.keys()];
       if (!bookingIds.length) return res.json({ quotations: [] });
       const quotations = await db().collection("quotations")
-        .find({ bookingId: { $in: bookingIds } }).sort({ createdAt:-1 }).limit(500).toArray();
-      const owned = quotations.map(q => { const b = byId.get(String(q.bookingId)); return { ...q, booking: { _id:b._id, ticketId:b.ticketId, serviceName:b.serviceName, status:b.status, createdAt:b.createdAt } }; });
+        .find({ bookingId: { $in: bookingIds } }).sort({ bookingId:1, versionNo:-1, createdAt:-1 }).limit(500).toArray();
+      const latestByBooking = new Map();
+      for (const q of quotations) if (!latestByBooking.has(String(q.bookingId))) latestByBooking.set(String(q.bookingId), q.quotationId);
+      const owned = quotations.map(q => { const b = byId.get(String(q.bookingId)); const currentId = b.activeQuotationId || latestByBooking.get(String(q.bookingId)); return { ...q, isActive: q.quotationId === currentId, isApprovedVersion: q.quotationId === b.approvedQuotationId, booking: { _id:b._id, ticketId:b.ticketId, serviceName:b.serviceName, status:b.status, createdAt:b.createdAt, activeQuotationId:b.activeQuotationId, activeQuotationVersion:b.activeQuotationVersion, approvedQuotationId:b.approvedQuotationId } }; });
       res.set('Cache-Control','no-store');
       res.json({ quotations: owned });
     } catch (e) {

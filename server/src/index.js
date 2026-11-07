@@ -204,6 +204,14 @@ app.put("/api/admin/content", requireAdmin, async (req, res, next) => {
     const validationError = validate(sv, "সার্ভিস") || validate(pk, "প্যাকেজ");
     if (validationError)
       return res.status(400).json({ message: validationError });
+    for (const service of sv) {
+      const discount = service.discountPercent ?? service.discount ?? 0;
+      if (!Number.isFinite(Number(discount)) || Number(discount) < 0 || Number(discount) > 100)
+        return res.status(400).json({ message: `সার্ভিস ${service.name}-এর Discount ০ থেকে ১০০ শতাংশের মধ্যে হতে হবে।` });
+      const duration = service.durationMinutes ?? service.duration;
+      if (duration !== undefined && duration !== null && duration !== "" && (!Number.isFinite(Number(duration)) || Number(duration) < 0 || !Number.isInteger(Number(duration))))
+        return res.status(400).json({ message: `সার্ভিস ${service.name}-এর Duration মিনিটে পূর্ণসংখ্যা হতে হবে অথবা খালি রাখতে হবে।` });
+    }
     const db = getDB();
     const now = new Date();
     await Promise.all([

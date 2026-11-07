@@ -95,6 +95,8 @@ export function AdminPage() {
   const [customerPage, setCustomerPage] = useState(1);
   const [customerPagination, setCustomerPagination] = useState({page:1,pages:1,total:0,limit:25});
   const [onlinePayments, setOnlinePayments] = useState([]);
+  const [offlinePayments, setOfflinePayments] = useState([]);
+  const [offlineRefunds, setOfflineRefunds] = useState([]);
   const [refundRequests, setRefundRequests] = useState([]);
   const [assignmentSelections, setAssignmentSelections] = useState({});
   const [stats, setStats] = useState({
@@ -144,9 +146,23 @@ export function AdminPage() {
       setLoading(false);
     }
   }
+  async function markOfflineRefunded(bookingId) {
+    const reference = window.prompt("Refund transaction/reference ID লিখুন") || "";
+    if (reference.trim().length < 4) return;
+    try { await api(`/admin/bookings/${bookingId}/offline-refund`, { method: "PATCH", body: JSON.stringify({ reference }) }); setNotice("Refund Income-Expense Ledger-এ সংরক্ষিত হয়েছে।"); await refresh(); } catch (e) { setError(e.message); }
+  }
+  async function reviewOfflinePayment(paymentId, action) {
+    try {
+      const reason = action === "reject" ? (window.prompt("Payment reject করার কারণ লিখুন") || "") : "";
+      if (action === "reject" && !reason.trim()) return;
+      await api(`/admin/offline-payments/${paymentId}/${action}`, { method: "PATCH", body: JSON.stringify(action === "reject" ? { reason } : {}) });
+      setNotice(action === "verify" ? "Payment verified. Booking Pending Confirmation-এ পাঠানো হয়েছে।" : "Payment proof rejected.");
+      await refresh();
+    } catch (e) { setError(e.message); }
+  }
   async function refresh() {
     try {
-      const [b, s, tech, commissions, customers, online, refunds] = await Promise.all([
+      const [b, s, tech, commissions, customers, online, refunds, offline, offlineRefundData] = await Promise.all([
         api(`/admin/bookings?status=${encodeURIComponent(statusFilter)}&q=${encodeURIComponent(query)}&page=${bookingPage}&limit=25`),
         api("/admin/stats"),
         api("/admin/technicians"),
@@ -154,6 +170,8 @@ export function AdminPage() {
         api(`/admin/customers?q=${encodeURIComponent(customerQuery)}&page=${customerPage}&limit=25`),
         api("/admin/online-payments"),
         api("/admin/refunds"),
+        api("/admin/offline-payments"),
+        api("/admin/offline-refunds"),
       ]);
       setBookings(b.bookings);
       setBookingPagination(b.pagination || {page:1,pages:1,total:b.bookings?.length||0,limit:25});
@@ -164,6 +182,8 @@ export function AdminPage() {
       setCustomerPagination(customers.pagination || {page:1,pages:1,total:customers.customers?.length||0,limit:25});
       setOnlinePayments(online.payments || []);
       setRefundRequests(refunds.refunds || []);
+      setOfflinePayments(offline.payments || []);
+      setOfflineRefunds(offlineRefundData.bookings || []);
       setError("");
     } catch (e) {
       setError(e.message);
@@ -329,6 +349,14 @@ export function AdminPage() {
         </div>
         {error && <div className="alert error">{error}</div>}
         {notice && <div className="alert success">{notice}</div>}
+        <section className="admin-card" style={{ marginBottom: 22, padding: 18, border: "1px solid #dbe5ef", borderRadius: 14, background: "#fff" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "center" }}><div><h2 style={{ margin: 0 }}>Offline Payment Verification</h2><p style={{ margin: "5px 0 0", color: "#64748b" }}>Customer-এর জমা দেওয়া Advance Payment যাচাই করুন। Verify করার পরও Booking Admin confirmation-এর অপেক্ষায় থাকবে।</p></div><b>{offlinePayments.length} Pending</b></div>
+          {offlinePayments.length === 0 ? <p style={{ color: "#64748b", marginBottom: 0 }}>যাচাইয়ের জন্য কোনো Offline Payment নেই।</p> : offlinePayments.map(payment => <div key={payment.paymentId} style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", padding: "13px 0", borderTop: "1px solid #e5eaf0", marginTop: 12 }}><div><b>{payment.ticketId}</b> · ৳{Number(payment.amount || 0).toFixed(2)}<div style={{ fontSize: 13, color: "#64748b" }}>{payment.method} · Sender: {payment.senderPhone} · TrxID: {payment.transactionId}</div>{payment.proofUrl && <a href={payment.proofUrl} target="_blank" rel="noreferrer">Payment proof</a>}</div><div style={{ display: "flex", gap: 8, alignItems: "center" }}><button className="btn btn-primary btn-small" onClick={() => reviewOfflinePayment(payment.paymentId, "verify")}>Verify</button><button className="btn btn-outline btn-small" onClick={() => reviewOfflinePayment(payment.paymentId, "reject")}>Reject</button></div></div>)}
+        </section>
+        <section className="admin-card" style={{ marginBottom: 22, padding: 18, border: "1px solid #dbe5ef", borderRadius: 14, background: "#fff" }}>
+          <h2 style={{ margin: "0 0 8px" }}>Offline Advance Refund Review</h2>
+          {offlineRefunds.length === 0 ? <p style={{ color: "#64748b", margin: 0 }}>Pending refund নেই।</p> : offlineRefunds.map(item => <div key={item._id} style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", padding: "12px 0", borderTop: "1px solid #e5eaf0" }}><div><b>{item.ticketId}</b> · {item.name} · ৳{Number(item.paymentAmount || 0).toFixed(2)}<div style={{ color: "#64748b", fontSize: 13 }}>{item.phone} · Cancelled booking</div></div><button className="btn btn-primary btn-small" onClick={() => markOfflineRefunded(item._id)}>Mark Refunded</button></div>)}
+        </section>
         <div className="stats-grid">
           <button
             type="button"
@@ -497,10 +525,10 @@ export function AdminPage() {
                       <td>{b.serviceName}</td>
                       <td>
                         <b>৳{Number(b.totalAmount ?? b.quotedAmount ?? b.price ?? 0).toLocaleString("en-BD", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</b>
-                        <small style={{display:"block"}}>Base: ৳{Number(b.baseAmount ?? b.minimumBooking ?? b.price ?? 0).toLocaleString("en-BD", { maximumFractionDigits: 2 })}</small>
+                        <small style={{display:"block"}}>Base: ৳{Number(b.baseAmount ?? b.minimumBooking ?? b.price ?? 0).toLocaleString("en-BD", { maximumFractionDigits: 2 })}</small>{Number(b.totalDiscount || 0) > 0 && <small style={{display:"block",color:"#15803d"}}>Discount: −৳{Number(b.totalDiscount).toLocaleString("en-BD",{maximumFractionDigits:2})} · Subtotal: ৳{Number(b.discountedSubtotal || 0).toLocaleString("en-BD",{maximumFractionDigits:2})}</small>}{b.totalDurationMinutes != null && <small style={{display:"block"}}>Duration: {Math.floor(Number(b.totalDurationMinutes)/60)}h {Number(b.totalDurationMinutes)%60}m</small>}{Array.isArray(b.pricingBreakdown) && b.pricingBreakdown.map((line) => <small key={line.serviceId} style={{display:"block"}}>{line.serviceName}: ৳{Number(line.price||0).toFixed(2)}{Number(line.discountAmount||0)>0 ? ` −৳${Number(line.discountAmount).toFixed(2)} (${line.discountPercent}%) = ৳${Number(line.discountedPrice||0).toFixed(2)}` : ""}</small>)}
                         {Number(b.emergencyFee || 0) > 0 && <small style={{display:"block"}}>জরুরি: ৳{Number(b.emergencyFee).toLocaleString("en-BD", { maximumFractionDigits: 2 })}</small>}
                         {Number(b.taxAmount || 0) > 0 && <small style={{display:"block"}}>Tax/VAT: ৳{Number(b.taxAmount).toLocaleString("en-BD", { maximumFractionDigits: 2 })}</small>}
-                        {Number(b.advanceDue || 0) > 0 && <small style={{display:"block"}}>Advance: ৳{Number(b.advanceDue).toLocaleString("en-BD", { maximumFractionDigits: 2 })}</small>}
+                        {Number(b.advanceDue || 0) > 0 && <small style={{display:"block"}}>Advance: ৳{Number(b.advanceDue).toLocaleString("en-BD", { maximumFractionDigits: 2 })}</small>}{b.remainingBalance != null && <small style={{display:"block",fontWeight:700}}>বাকি: ৳{Number(b.remainingBalance).toLocaleString("en-BD",{maximumFractionDigits:2})}</small>}
                       </td>
                       <td>
                         <b>{b.area}</b>
@@ -519,6 +547,8 @@ export function AdminPage() {
                           onChange={(e) => updateStatus(b._id, e.target.value)}
                         >
                           {[
+                            "Pending Confirmation",
+                            "Confirmed",
                             "New",
                             "Contacted",
                             "Assigned",
@@ -647,6 +677,8 @@ export function ContentManagerPage({ embedded = false } = {}) {
               name: "New Service",
               subtitle: "সার্ভিসের বিবরণ",
               price: 300,
+              durationMinutes: "",
+              discountPercent: 0,
               items: [],
               image: "",
             }
@@ -684,6 +716,9 @@ export function ContentManagerPage({ embedded = false } = {}) {
       });
       setNotice("");
       setEditingIndex(null);
+      // Notify the public catalogue hook in this tab and other open tabs immediately.
+      window.dispatchEvent(new Event("mu:site-content-updated"));
+      try { localStorage.setItem("muSiteContentUpdatedAt", String(Date.now())); } catch {}
       setSuccessPopup(true);
     } catch (e) {
       setError(e.message);
@@ -741,6 +776,9 @@ export function ContentManagerPage({ embedded = false } = {}) {
                 অথবা image URL ব্যবহার করুন।
               </p>
             </div>}
+        {embedded && <div className="alert info" style={{marginBottom:16}}>
+          <b>সার্ভিসের মূল্য ও ছাড় সম্পাদনা:</b> নিচের তালিকা থেকে সার্ভিসের পাশে <b>“Price / Duration / Discount Edit”</b> বাটনে ক্লিক করুন। ফর্মে Price, ঐচ্ছিক Estimated Duration, Discount (%) এবং স্বয়ংক্রিয় Discount Amount ও Discounted Price পাবেন।
+        </div>}
         <div className="editor-tabs">
               <button
                 className={`btn ${tab === "services" ? "btn-primary" : "btn-outline"}`}
@@ -764,10 +802,10 @@ export function ContentManagerPage({ embedded = false } = {}) {
                 <div className="content-item-row" key={item.id || i}>
                   <div className="content-item-summary">
                     {item.image ? <img src={item.image} alt="" onError={(e) => { e.currentTarget.style.display = "none"; }} /> : <span className="content-item-icon">{item.icon || (tab === "services" ? "🛠️" : "📦")}</span>}
-                    <div><strong>{item.name || "নামহীন"}</strong><small>{item.id || "No ID"} · ৳{item.price ?? 0}</small></div>
+                    <div><strong>{item.name || "নামহীন"}</strong><small>{item.id || "No ID"} · মূল মূল্য: ৳{item.price ?? 0}{tab === "services" ? ` · Duration: ${item.durationMinutes === "" || item.durationMinutes == null ? "সেট করা নেই" : `${item.durationMinutes} মিনিট`} · Discount: ${Number(item.discountPercent || 0)}% · Discounted Price: ৳${(Number(item.price||0)*(1-Math.min(100,Number(item.discountPercent)||0)/100)).toFixed(2)}` : ""}</small></div>
                   </div>
                   <div className="content-item-actions">
-                    <button type="button" className="icon-action" title="Update" aria-label="Update" onClick={() => setEditingIndex(i)}><Pencil size={18} /></button>
+                    <button type="button" className="btn btn-outline btn-small" title="Update service pricing fields" aria-label={tab === "services" ? "Price / Duration / Discount Edit" : "Update"} onClick={() => setEditingIndex(i)}><Pencil size={15} /> {tab === "services" ? "Price / Duration / Discount Edit" : "Edit"}</button>
                     <button type="button" className="icon-action danger" title="Delete" aria-label="Delete" onClick={() => remove(i)}><Trash2 size={18} /></button>
                   </div>
                 </div>
@@ -778,11 +816,16 @@ export function ContentManagerPage({ embedded = false } = {}) {
               const i = editingIndex;
               return <div className="content-editor-modal-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) setEditingIndex(null); }}>
                 <article className="visual-editor-item selected-content-editor content-editor-modal" role="dialog" aria-modal="true" aria-labelledby="content-editor-modal-title">
-                <div className="selected-editor-heading"><h3 id="content-editor-modal-title">{item.name || "নতুন item"} — Update</h3><button type="button" className="btn btn-outline" onClick={() => setEditingIndex(null)}>বন্ধ করুন</button></div>
+                <div className="selected-editor-heading"><h3 id="content-editor-modal-title">{item.name || "নতুন item"} — {tab === "services" ? "Service Pricing & Details" : "Package Update"}</h3><button type="button" className="btn btn-outline" onClick={() => setEditingIndex(null)}>বন্ধ করুন</button></div>
                 {item.image && <img className="editor-image-preview" src={item.image} alt="Preview" onError={(e) => { e.currentTarget.style.display = "none"; }} />}
                 <div className="editor-field-grid">
                   <label>নাম<input value={item.name || ""} onChange={(e) => update(i, "name", e.target.value)} /></label>
-                  <label>মূল্য (৳)<input type="number" min="0" value={item.price ?? 0} onChange={(e) => update(i, "price", Number(e.target.value))} /></label>
+                  <label><b>Individual Price (৳)</b><input type="number" min="0" step="0.01" value={item.price ?? 0} onChange={(e) => update(i, "price", Number(e.target.value))} /></label>
+                  {tab === "services" && <>
+                    <label><b>Estimated Duration (মিনিট, ঐচ্ছিক)</b><input type="number" min="0" step="1" placeholder="খালি রাখলে নির্ধারিত হবে না" value={item.durationMinutes ?? ""} onChange={(e) => update(i, "durationMinutes", e.target.value === "" ? "" : Number(e.target.value))} /></label>
+                    <label><b>Individual Discount (%)</b><input type="number" min="0" max="100" step="0.01" value={item.discountPercent ?? 0} onChange={(e) => update(i, "discountPercent", Math.min(100, Math.max(0, Number(e.target.value) || 0)))} /></label>
+                    <div className="editor-calculated-price"><small>Automatic Discount Amount</small><strong>৳{((Number(item.price)||0) * Math.min(100,Math.max(0,Number(item.discountPercent)||0))/100).toFixed(2)}</strong><small>Automatic Discounted Price</small><strong>৳{((Number(item.price)||0) * (1-Math.min(100,Math.max(0,Number(item.discountPercent)||0))/100)).toFixed(2)}</strong></div>
+                  </>}
                   <label>ID<input value={item.id || ""} onChange={(e) => update(i, "id", e.target.value)} /></label>
                   {tab === "services" && <label>Icon / Emoji<input value={item.icon || ""} onChange={(e) => update(i, "icon", e.target.value)} /></label>}
                   <label className="editor-wide">ছবির URL<input value={item.image || ""} placeholder="https://example.com/image.jpg" onChange={(e) => update(i, "image", e.target.value)} /></label>
@@ -1579,7 +1622,7 @@ export function AdminOperationsPage() {
           </div>
         )}
         {tab === "quotations" && (
-          <div className="admin-table-card"><div className="table-toolbar"><div><h2>All Quotations</h2><p>সকল Customer-এর Quotation, সংশ্লিষ্ট Booking ও সিদ্ধান্তের Status এখানে দেখা যাবে।</p></div><span>{adminQuotations.length} / {quotationPagination.total||adminQuotations.length}</span></div><div className="table-scroll"><table className="bookings-table"><thead><tr><th>Quotation</th><th>Customer / Ticket</th><th>Service</th><th>Created</th><th>Items</th><th>Total</th><th>Status</th></tr></thead><tbody>{adminQuotations.map(q=><tr key={q.quotationId}><td>{q.quotationId}</td><td><b>{q.booking?.name||"—"}</b><small style={{display:"block"}}>{q.booking?.ticketId||q.bookingId}</small><small>{q.booking?.phone||""}</small></td><td>{q.booking?.serviceName||"—"}</td><td>{q.createdAt?new Date(q.createdAt).toLocaleString("bn-BD"):"—"}</td><td>{(q.items||[]).map(i=>`${i.description} × ${i.quantity}`).join(", ")}</td><td>৳{Number(q.total||0).toLocaleString("en-BD")}</td><td>{q.status}</td></tr>)}{!adminQuotations.length&&<tr><td colSpan="7">কোনো Quotation পাওয়া যায়নি।</td></tr>}</tbody></table></div><button className="btn btn-outline" style={{marginTop:12}} onClick={load}>Refresh quotations</button></div>
+          <div className="admin-table-card"><div className="table-toolbar"><div><h2>All Quotations</h2><p>সকল Customer-এর Quotation, সংশ্লিষ্ট Booking ও সিদ্ধান্তের Status এখানে দেখা যাবে।</p></div><span>{adminQuotations.length} / {quotationPagination.total||adminQuotations.length}</span></div><div className="table-scroll"><table className="bookings-table"><thead><tr><th>Quotation / Version</th><th>Customer / Ticket</th><th>Service</th><th>Created</th><th>Items</th><th>Total</th><th>Status</th></tr></thead><tbody>{adminQuotations.map(q=><tr key={q.quotationId}><td><b>V{Number(q.versionNo)||1}</b>{q.isActive&&<small style={{display:"block",color:"#16834a"}}>Current Version</small>}{q.isApprovedVersion&&<small style={{display:"block",color:"#1769aa"}}>Approved Version</small>}<small style={{display:"block"}}>{q.quotationId}</small>{q.revisionReason&&<small style={{display:"block"}}>কারণ: {q.revisionReason}</small>}</td><td><b>{q.booking?.name||"—"}</b><small style={{display:"block"}}>{q.booking?.ticketId||q.bookingId}</small><small>{q.booking?.phone||""}</small></td><td>{q.booking?.serviceName||"—"}</td><td>{q.createdAt?new Date(q.createdAt).toLocaleString("bn-BD"):"—"}</td><td>{(q.items||[]).map(i=>`${i.description} × ${i.quantity}`).join(", ")}</td><td>৳{Number(q.total||0).toLocaleString("en-BD")}</td><td>{q.status}</td></tr>)}{!adminQuotations.length&&<tr><td colSpan="7">কোনো Quotation পাওয়া যায়নি।</td></tr>}</tbody></table></div><button className="btn btn-outline" style={{marginTop:12}} onClick={load}>Refresh quotations</button></div>
         )}
         {tab === "inventory" && (
           <>

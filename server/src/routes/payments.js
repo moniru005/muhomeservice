@@ -35,14 +35,20 @@ router.post('/payments/checkout', requireAuth, requireRole('customer'), async (r
     const db = getDB();
     const booking = await db.collection('bookings').findOne({ _id: new ObjectId(req.body.bookingId), userId: req.user.sub });
     if (!booking) return res.status(404).json({ message: 'Booking পাওয়া যায়নি।' });
-    const expected = money(booking.totalAmount || booking.quotedAmount || 0);
+    if (!['Approved', 'In progress', 'Completed'].includes(booking.status)) return res.status(409).json({ message: 'Payment করার আগে Customer-এর সর্বশেষ Quotation Approve হতে হবে।' });
+    let approvedQuotation = null;
+    if (booking.activeQuotationId || booking.approvedQuotationId) {
+      if (!booking.activeQuotationId || booking.approvedQuotationId !== booking.activeQuotationId) return res.status(409).json({ message: 'সর্বশেষ Quotation এখনো Approve হয়নি।' });
+      approvedQuotation = await db.collection('quotations').findOne({ quotationId: booking.approvedQuotationId, bookingId: booking._id.toString(), status: 'approved' });
+      if (!approvedQuotation) return res.status(409).json({ message: 'Approved Quotation Version যাচাই করা যায়নি।' });
+    }
+    const expected = money(approvedQuotation ? (approvedQuotation.payableTotal ?? approvedQuotation.total) : (booking.quotationPayableTotal ?? booking.totalAmount ?? booking.quotedAmount ?? 0));
     const paid = money(booking.paymentAmount || 0);
     const amount = money(expected - paid);
     if (amount <= 0) return res.status(409).json({ message: 'এই Booking-এর কোনো বকেয়া নেই।' });
-    if (!['Quotation sent', 'Approved', 'In progress', 'Completed'].includes(booking.status)) return res.status(409).json({ message: 'Quotation/বিল নিশ্চিত হওয়ার পর পেমেন্ট করা যাবে।' });
-    const pending = await db.collection('onlinePayments').findOne({ bookingId: booking._id.toString(), userId: req.user.sub, status: 'pending', expiresAt: { $gt: new Date() } });
+    const pending = await db.collection('onlinePayments').findOne({ bookingId: booking._id.toString(), userId: req.user.sub, status: 'pending', expiresAt: { $gt: new Date() }, ...(approvedQuotation ? { quotationId: approvedQuotation.quotationId } : {}) });
     if (pending?.checkoutUrl) return res.json({ paymentId: pending.paymentId, checkoutUrl: pending.checkoutUrl, amount: pending.amount, currency: pending.currency, reused: true });
-    const payment = { paymentId: randomUUID(), bookingId: booking._id.toString(), userId: req.user.sub, ticketId: booking.ticketId, amount, currency: process.env.PAYMENT_CURRENCY || 'BDT', status: 'creating', provider: process.env.PAYMENT_PROVIDER || 'generic', createdAt: new Date(), updatedAt: new Date(), expiresAt: new Date(Date.now() + 30 * 60 * 1000) };
+    const payment = { paymentId: randomUUID(), bookingId: booking._id.toString(), userId: req.user.sub, ticketId: booking.ticketId, quotationId: approvedQuotation?.quotationId || booking.approvedQuotationId || null, quotationVersion: approvedQuotation ? (Number(approvedQuotation.versionNo) || 1) : (Number(booking.approvedQuotationVersion) || null), amount, currency: process.env.PAYMENT_CURRENCY || 'BDT', status: 'creating', provider: process.env.PAYMENT_PROVIDER || 'generic', createdAt: new Date(), updatedAt: new Date(), expiresAt: new Date(Date.now() + 30 * 60 * 1000) };
     await db.collection('onlinePayments').insertOne(payment);
     try {
       const customer = await db.collection('users').findOne({ _id: new ObjectId(req.user.sub) }, { projection: { name: 1, email: 1, phone: 1 } });
@@ -86,9 +92,10 @@ router.get('/payments/bkash/callback', async (req, res) => {
       if (!booking) throw new Error('Booking missing during bKash settlement');
       const sourceKey = `online-payment:${payment.paymentId}`;
       await db.collection('financeEntries').updateOne({ sourceKey }, { $setOnInsert: { type: 'income', category: 'Service payment', amount: payment.amount, note: `${payment.ticketId} · bKash online payment · ${verified.transactionId}`, date: new Date(), createdAt: new Date(), createdBy: 'bkash-verified-callback', sourceType: 'online-payment', sourceId: bookingId.toString(), sourceKey, bookingId: bookingId.toString(), ticketId: booking.ticketId, paymentMethod: 'online', provider: 'bkash', providerTransactionId: verified.transactionId } }, { upsert: true });
-      const updatedBooking = await db.collection('bookings').updateOne({ _id: bookingId, 'payments.paymentId': { $ne: payment.paymentId } }, { $push: { payments: { paymentId: payment.paymentId, amount: payment.amount, method: 'online', reference: verified.transactionId, provider: 'bkash', receivedAt: new Date(), receivedBy: 'verified-bkash-callback' } }, $inc: { paymentAmount: payment.amount }, $set: { updatedAt: new Date() } });
-      const current = await db.collection('bookings').findOne({ _id: bookingId }, { projection: { paymentAmount: 1, totalAmount: 1, quotedAmount: 1, phone: 1, ticketId: 1 } });
-      const expected = money(current.totalAmount || current.quotedAmount || 0);
+      const updatedBooking = await db.collection('bookings').updateOne({ _id: bookingId, 'payments.paymentId': { $ne: payment.paymentId } }, { $push: { payments: { paymentId: payment.paymentId, amount: payment.amount, method: 'online', reference: verified.transactionId, provider: 'bkash', receivedAt: new Date(), receivedBy: 'verified-bkash-callback', quotationId: payment.quotationId || null, quotationVersion: payment.quotationVersion || null } }, $inc: { paymentAmount: payment.amount }, $set: { updatedAt: new Date() } });
+      const current = await db.collection('bookings').findOne({ _id: bookingId }, { projection: { paymentAmount: 1, totalAmount: 1, quotedAmount: 1, phone: 1, ticketId: 1, activeQuotationId: 1, approvedQuotationId: 1 } });
+      const activeApprovedQuote = payment.quotationId ? await db.collection('quotations').findOne({ quotationId: payment.quotationId, bookingId: bookingId.toString(), status: 'approved' }) : null;
+      const expected = money(activeApprovedQuote ? activeApprovedQuote.total : (current.totalAmount || current.quotedAmount || 0));
       const paid = money(current.paymentAmount || 0);
       await db.collection('bookings').updateOne({ _id: bookingId }, { $set: { paymentStatus: expected > 0 && paid >= expected ? 'paid' : 'partial', updatedAt: new Date() } });
       await db.collection('onlinePayments').updateOne({ _id: payment._id, status: 'settling' }, { $set: { status: 'paid', verifiedAt: new Date(), providerTransactionId: providerPaymentId, providerTrxId: verified.transactionId, updatedAt: new Date() }, $unset: { reconciliationReason: '' } });
@@ -139,8 +146,9 @@ router.post('/payments/webhook', async (req, res, next) => {
         const already = (current.payments || []).some(p => p.paymentId === payment.paymentId);
         if (!already) {
           const totalPaid = money(Number(current.paymentAmount || 0) + amount);
-          const expectedTotal = Number(current.totalAmount || current.quotedAmount || 0);
-          await db.collection('bookings').updateOne({ _id: bookingId, 'payments.paymentId': { $ne: payment.paymentId } }, { $push: { payments: { paymentId: payment.paymentId, amount, method: 'online', reference: providerTransactionId, receivedAt: new Date(), receivedBy: 'verified-payment-webhook' } }, $inc: { paymentAmount: amount }, $set: { paymentStatus: expectedTotal > 0 && totalPaid >= expectedTotal ? 'paid' : 'partial', updatedAt: new Date() } });
+          const activeApprovedQuote = payment.quotationId ? await db.collection('quotations').findOne({ quotationId: payment.quotationId, bookingId: bookingId.toString(), status: 'approved' }) : null;
+          const expectedTotal = Number(activeApprovedQuote ? activeApprovedQuote.total : (current.totalAmount || current.quotedAmount || 0));
+          await db.collection('bookings').updateOne({ _id: bookingId, 'payments.paymentId': { $ne: payment.paymentId } }, { $push: { payments: { paymentId: payment.paymentId, amount, method: 'online', reference: providerTransactionId, receivedAt: new Date(), receivedBy: 'verified-payment-webhook', quotationId: payment.quotationId || null, quotationVersion: payment.quotationVersion || null } }, $inc: { paymentAmount: amount }, $set: { paymentStatus: expectedTotal > 0 && totalPaid >= expectedTotal ? 'paid' : 'partial', updatedAt: new Date() } });
         }
       } catch (e) {
         await db.collection('onlinePayments').updateOne({ _id: payment._id }, { $set: { status: 'reconciliation_required', reconciliationReason: String(e.message).slice(0, 300) } });
